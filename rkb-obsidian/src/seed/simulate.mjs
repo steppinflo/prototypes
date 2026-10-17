@@ -409,7 +409,7 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
             severity: major ? (rng() < 0.25 ? 'critical' : 'high') : (rng() < 0.3 ? 'medium' : 'low'),
             part_number: tp.part_number, supplier_id: tp.ip.supplier_id, inventory_part_id: tp.ip.id,
             inventory_order_id: tp.ip.inventory_order_id, tractor_id: t.id, customer_id: sh.order.customer.id, quantity: 1,
-            description: `${desc} reported by ${sh.order.customer.name} (${t.serial_number}, ${Math.round((failN - dayN) / 30)} months in service)`,
+            description: `${desc} reported by ${sh.order.customer.name} (${t.serial_number}, ${failN - dayN < 45 ? `${failN - dayN} days` : `${Math.round((failN - dayN) / 30)} months`} in service)`,
           });
           break;
         }

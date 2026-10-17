@@ -307,3 +307,13 @@ textarea { min-height: 70px; resize: vertical; }
 .dash-tractors th, .dash-tractors td { padding: 6px 6px; }
 .dash-tractors th:first-child, .dash-tractors td:first-child { padding-left: 14px; }
 .dash-tractors th:last-child, .dash-tractors td:last-child { padding-right: 14px; }
+td .mono, td a.mono { white-space: nowrap; }
+td .row { flex-wrap: nowrap; }
+
+@media (max-width: 640px) {
+  .seg { max-width: 100%; overflow-x: auto; }
+  .seg button { white-space: nowrap; }
+  .task { grid-template-columns: 4px minmax(0, 1fr); }
+  .task-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .page-head .actions { margin-left: 0; }
+}

@@ -174,6 +174,9 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
     supplierOptions.get(sp.part_number).push(sp);
   }
   const balances = new Map(db.prepare('SELECT * FROM v_part_balances').all().map((b) => [b.part_number, b]));
+  // Complete parts kits on hand right now, per model: how many tractors could start today.
+  const kitsOnHand = Object.fromEntries([...bom].map(([model, lines]) =>
+    [model, Math.min(...lines.map((l) => Math.floor((balances.get(l.part_number)?.available ?? 0) / l.quantity)))]));
   const openPos = db.prepare(`
     SELECT io.*, s.name AS supplier_name,
       (SELECT sh.expected_arrival_date FROM shipments sh WHERE sh.inventory_order_id = io.id AND sh.status = 'in_transit') AS eta
@@ -399,9 +402,10 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
       expectedSubmission: b.expectedSubmission ?? null,
       needBy: isoDay(b.needByN), latestStart: isoDay(b.latestStartN), buildDate: isoDay(b.buildN),
       partsReady: b.partsReadyN ? isoDay(b.partsReadyN) : null, projectedShip: isoDay(b.projectedShipN),
-      daysLate: b.daysLate, status: b.status, shortParts: b.shortParts,
+      daysLate: b.daysLate, status: b.status, shortParts: b.shortParts, startableNow: kitsOnHand[b.model] > 0,
     })),
     stockAllocations,
+    kitsOnHand,
     parts: partsOut,
     scheduledReceipts: scheduledReceipts.map(({ availableN, ...r }) => ({ ...r, availableForBuild: isoDay(availableN) })),
     recommendations,

@@ -115,14 +115,18 @@ export function generateTasks(db, { today, plan, performance }) {
 
   // Builds the plan schedules for today / the next working day that have parts.
   const horizonN = isWorkday(todayN) ? todayN : nextWorkday(todayN);
-  const startable = plan.builds.filter((b) => dayNum(b.buildDate) <= horizonN && !b.shortParts.length);
+  const startable = plan.builds.filter((b) => dayNum(b.buildDate) <= horizonN && b.startableNow);
   const byOrder = new Map();
   for (const b of startable) {
     const k = b.orderId ?? `stock:${b.model}`;
     if (!byOrder.has(k)) byOrder.set(k, []);
     byOrder.get(k).push(b);
   }
-  for (const [k, bs] of byOrder) {
+  const kitsLeft = { ...plan.kitsOnHand };
+  for (const [k, all] of byOrder) {
+    const bs = all.slice(0, kitsLeft[all[0].model]);
+    if (!bs.length) continue;
+    kitsLeft[all[0].model] -= bs.length;
     const b = bs[0];
     const firm = b.source === 'firm';
     add({

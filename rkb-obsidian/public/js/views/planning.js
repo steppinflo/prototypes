@@ -220,6 +220,6 @@ function buildsTable(builds) {
     { label: 'Parts ready', key: 'partsReady', render: (b) => (b.partsReady ? fmtDate(b.partsReady) : html`<span class="muted">on hand</span>`) },
     { label: 'Short', key: 'shortParts', render: (b) => b.shortParts.join(', ') || '—' },
     { label: 'Status', key: 'status', render: (b) => html`${statusBadge(b.status)}${b.daysLate ? html` <span class="small due over">${b.daysLate}d</span>` : ''}` },
-    { label: '', nosort: true, render: (b) => (b.shortParts.length ? '' : actionBtn({ label: 'Start now', url: '/builds', body: b.orderId ? { orderId: b.orderId, count: 1 } : { model: b.model, count: 1 } })) },
+    { label: '', nosort: true, render: (b) => (!b.startableNow ? '' : actionBtn({ label: 'Start now', url: '/builds', body: b.orderId ? { orderId: b.orderId, count: 1 } : { model: b.model, count: 1 } })) },
   ], builds, { empty: 'No builds in this view', scroll: true });
 }

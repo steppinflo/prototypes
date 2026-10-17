@@ -62,3 +62,10 @@ test('tasks have unique keys, due dates and context', () => {
   for (const t of tasks) assert.ok(t.due && t.title && t.blocking, t.key);
   assert.ok(tasks.some((t) => t.type === 'qc_hold'));
 });
+
+test('builds are only offered to start now when a full parts kit is on hand', () => {
+  const kits = (model) => db.prepare(`SELECT MIN(v.available / b.quantity) AS n FROM bom_items b
+    JOIN v_part_balances v ON v.part_number = b.part_number WHERE b.model_number = ?`).get(model).n;
+  for (const b of plan.builds) assert.equal(b.startableNow, kits(b.model) > 0, `${b.model} build #${b.seq}`);
+  for (const t of tasks.filter((x) => x.type === 'start_build')) assert.ok(t.action.body.count <= kits(t.action.body.model ?? db.prepare('SELECT model_number FROM customer_orders WHERE id = ?').get(t.action.body.orderId).model_number));
+});

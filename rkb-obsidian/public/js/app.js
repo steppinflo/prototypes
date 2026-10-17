@@ -123,6 +123,11 @@ function describe(url, out) {
   if (out.tractors && url.includes('/builds')) return `Started ${out.tractors.length} build(s): ${out.tractors.map((t) => t.serial).join(', ')}`;
   if (out.shipmentId) return `Shipment ${out.shipmentId} booked, ETA ${fmtDate(out.eta)}`;
   if (out.status) return `Updated (${out.status})`;
+  if (url.includes('/clear-hold')) return 'Replacement installed — released from QC hold';
+  if (url.includes('/complete')) return 'Passed QC — build complete';
+  if (url.includes('/earmark')) return `Earmarked to ${out.orderId}`;
+  if (url.includes('/deliver')) return 'Marked delivered';
+  if (url.includes('/cancel')) return `Cancelled ${out.id}; its tractors returned to stock`;
   return 'Done';
 }
 

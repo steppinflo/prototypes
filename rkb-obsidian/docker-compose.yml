@@ -1,0 +1,14 @@
+services:
+  portal:
+    build: .
+    image: rkb-obsidian-portal
+    ports:
+      - "${RKB_PORT:-4300}:4300"
+    environment:
+      # stale = rebuild demo data on start if it is older than RKB_STALE_DAYS; always | never
+      RKB_RESEED: ${RKB_RESEED:-stale}
+      RKB_STALE_DAYS: ${RKB_STALE_DAYS:-7}
+      # Pin "today" for repeatable demos, e.g. RKB_TODAY=2026-10-16
+      RKB_TODAY: ${RKB_TODAY:-}
+      TZ: ${TZ:-America/Chicago}
+    restart: unless-stopped

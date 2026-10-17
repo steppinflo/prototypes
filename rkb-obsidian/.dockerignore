@@ -1,0 +1,9 @@
+**/._*
+**/.DS_Store
+.git
+data
+node_modules
+test
+prompts
+docs/solutions
+docs/business

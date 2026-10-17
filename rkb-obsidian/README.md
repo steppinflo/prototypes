@@ -20,7 +20,11 @@ npm start
 ```
 
 Then open **http://localhost:4300**. On first start the database is built from
-`docs/synthetic_supply_chain_dataset.csv` (about a second).
+`docs/synthetic_supply_chain_dataset.csv` (a few seconds; about 10 on a Raspberry Pi).
+
+**Documentation:** every portal flow and user journey, the task rules, record lifecycles
+and how each number is calculated are in
+[docs/portal/user-journeys.md](docs/portal/user-journeys.md).
 
 | Variable | Default | Purpose |
 |---|---|---|

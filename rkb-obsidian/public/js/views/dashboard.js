@@ -8,7 +8,7 @@ import {
 } from '../lib.js';
 import { barChart, legend, tipRows } from '../charts.js';
 
-const CATEGORY_ORDER = ['Purchasing', 'Receiving', 'Production', 'Fulfilment', 'Customer', 'Quality'];
+const CATEGORY_ORDER = ['Purchasing', 'Receiving', 'Production', 'Fulfilment', 'Customer', 'Service', 'Quality'];
 
 export async function dashboardView() {
   const d = await api('/dashboard');
@@ -75,6 +75,7 @@ export function taskCard(t) {
       <span class="due ${due.cls}">${due.text}</span>
       <div class="task-btns">
         ${actionBtn(t.action, 'btn small primary')}
+        ${t.more.map((m) => actionBtn(m, 'btn small'))}
         <button class="btn small ghost" data-post="/tasks/state" data-body="${JSON.stringify({ key: t.key, status: 'snoozed', days: 1 })}" data-success="Snoozed until tomorrow" title="Snooze 1 day">Snooze</button>
         <button class="btn small ghost" data-post="/tasks/state" data-body="${JSON.stringify({ key: t.key, status: 'done' })}" data-success="Marked done" title="Mark done">✓</button>
       </div>

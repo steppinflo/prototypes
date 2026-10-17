@@ -4,6 +4,7 @@ import {
   api, html, fmtNum, fmtMoney, fmtDate, seg, qs, table, statusBadge, pageHead, partLink, poLink, supplierLink,
   actionBtn, today, daysBetween, DIALOGS, openDialog, toast, severityBadge,
 } from '../lib.js';
+import { notificationList } from './notifications.js';
 
 export async function purchasingView() {
   const q = qs();
@@ -26,7 +27,7 @@ export async function purchasingView() {
         { label: r0(status), key: 'actual_delivery_date', render: (r) => (r.status === 'received'
           ? html`${fmtDate(r.actual_delivery_date)}${r.actual_delivery_date > r.expected_delivery_date ? html` <span class="due over small">+${daysBetween(r.expected_delivery_date, r.actual_delivery_date)}d</span>` : ''}`
           : r.prediction ? html`${fmtDate(r.prediction.predictedArrival)}<div class="muted small">${r.prediction.basis}</div>` : '—') },
-        { label: 'Source', key: 'source', render: (r) => (r.source === 'model_recommendation' ? html`<span class="badge info">Model</span>` : r.source === 'manual' ? html`<span class="badge plain">Manual</span>` : html`<span class="muted small">History</span>`) },
+        { label: 'Source', key: 'source', render: (r) => html`${r.source === 'model_recommendation' ? html`<span class="badge info">Model</span>` : r.source === 'manual' ? html`<span class="badge plain">Manual</span>` : html`<span class="muted small">History</span>`}${r.rush ? html` <span class="badge high">Rush</span>` : ''}` },
         { label: 'Status', key: 'status', render: (r) => html`${statusBadge(r.status)}${r.quantity_rejected ? html` <span class="badge critical">${r.quantity_rejected} rejected</span>` : ''}` },
         { label: '', nosort: true, render: (r) => poActions(r) },
       ], data.rows, { empty: 'No parts orders here' })}
@@ -37,7 +38,9 @@ const r0 = (status) => (status === 'received' ? 'Delivered' : 'Arrival (predicte
 
 function poActions(r) {
   if (r.status === 'submitted' || r.status === 'confirmed') {
-    return html`<div class="row">${actionBtn({ label: 'Mark shipped', url: `/inventory-orders/${r.id}/ship`, body: {} })}
+    return html`<div class="row">${r.rush ? '' : actionBtn({ label: 'Expedite +15%', url: `/inventory-orders/${r.id}/expedite`, body: {},
+        confirm: `Expedite ${r.id}? The supplier is paid a 15% premium on the outstanding quantity for a faster delivery.` })}
+      ${actionBtn({ label: 'Mark shipped', url: `/inventory-orders/${r.id}/ship`, body: {} })}
       <button class="btn small" data-dialog="receive-po" data-po="${r.id}" data-qty="${r.quantity}">Receive…</button></div>`;
   }
   if (r.status === 'in_transit') return html`<button class="btn small primary" data-dialog="receive-po" data-po="${r.id}" data-qty="${r.quantity}">Receive…</button>`;
@@ -51,7 +54,8 @@ export async function purchaseOrderView(id) {
       crumbs: html`<a href="#/purchasing">Parts orders</a> /`,
       title: html`<span class="mono">${po.id}</span> · ${po.quantity} × ${po.part_number}`,
       sub: html`${po.part_name} from ${supplierLink(po.supplier_id, po.supplier_name)} · ${statusBadge(po.status)}`,
-      actions: poActions(po),
+      actions: html`${poActions(po)} ${actionBtn({ label: 'Notify supplier…', dialog: 'notify', data: { recipientType: 'supplier', recipientId: po.supplier_id, urgency: po.expected_delivery_date < today() && po.status !== 'received' ? 'urgent' : 'normal',
+        entity: 'inventory_order', entityId: po.id, subject: `Our order ${po.id}`, body: `Regarding ${po.id} for ${po.quantity} × ${po.part_number} (due ${po.expected_delivery_date}): ` } }, 'btn')}`,
     })}
     <div class="grid cols-2" style="margin-bottom:16px">
       <section class="card"><div class="card-head"><h2>Inventory order</h2></div><div class="card-body"><dl class="dl">
@@ -65,6 +69,7 @@ export async function purchaseOrderView(id) {
         <dt>Actual delivery</dt><dd>${fmtDate(po.actual_delivery_date, { year: true })}</dd>
         <dt>Delivery address</dt><dd>${po.delivery_address}</dd>
         <dt>Source</dt><dd>${po.source === 'model_recommendation' ? 'Inventory model recommendation' : po.source === 'manual' ? 'Placed manually' : 'Historical record'}</dd>
+        <dt>Priority</dt><dd>${po.rush ? html`<span class="badge high">Rush</span> premium ${fmtMoney(po.rush_premium)}` : 'Standard'}</dd>
       </dl></div></section>
       <section class="card"><div class="card-head"><h2>Shipping</h2></div>
         ${table([
@@ -82,6 +87,7 @@ export async function purchaseOrderView(id) {
           { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
         ], po.failures, { empty: 'No issues' })}
+        ${notificationList(po.notifications)}
       </section>
     </div>
     <section class="card"><div class="card-head"><h2>Received into inventory</h2></div>

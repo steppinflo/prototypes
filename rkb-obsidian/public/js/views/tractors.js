@@ -6,7 +6,7 @@ import {
 } from '../lib.js';
 
 const STATUSES = [['current', 'Current'], ['in_production', 'Building'], ['qc_hold', 'QC hold'], ['inventoried', 'In stock'],
-  ['earmarked', 'Earmarked'], ['shipping', 'Shipping'], ['delivered', 'Delivered'], ['all', 'All']];
+  ['earmarked', 'Earmarked'], ['shipping', 'Shipping'], ['delivered', 'Delivered'], ['in_repair', 'In repair'], ['all', 'All']];
 
 export async function tractorsView() {
   const q = qs();
@@ -41,6 +41,9 @@ export async function tractorView(id) {
   if (t.status === 'in_production') actions.push(actionBtn({ label: 'Pass QC & complete', url: `/tractors/${t.id}/complete`, body: {} }, 'btn primary'));
   if (t.status === 'qc_hold') actions.push(actionBtn({ label: `Install replacement ${t.hold_part_number} & release`, url: `/tractors/${t.id}/clear-hold`, body: {} }, 'btn primary'));
   if (!t.customer_order_id && t.openOrdersForModel.length) actions.push(html`<button class="btn" data-dialog="earmark" data-tractor="${t.id}" data-orders="${JSON.stringify(t.openOrdersForModel)}">Earmark to order…</button>`);
+  if (t.status === 'delivered' && !t.serviceJobs.some((j) => j.status !== 'completed')) actions.push(actionBtn({ label: 'Arrange pickup & repair…', dialog: 'pickup', data: { tractorId: t.id } }, 'btn'));
+  const activeJob = t.serviceJobs.find((j) => j.status !== 'completed');
+  if (activeJob) actions.push(html`<a class="btn" href="#/service/${activeJob.id}">Service job ${activeJob.id} →</a>`);
   actions.push(html`<button class="btn" data-dialog="log-failure" data-tractor="${t.id}" data-stage="${t.status === 'delivered' || t.status === 'shipping' ? 'field' : 'manufacturing'}" data-parts="${JSON.stringify([...new Set(t.parts.map((p) => p.part_number))])}">Log failure…</button>`);
   return html`
     ${pageHead({
@@ -87,8 +90,16 @@ export async function tractorView(id) {
         { label: 'Supplier', key: 'supplier_name', render: (p) => supplierLink(p.supplier_id, p.supplier_name) },
         { label: 'Parts order', key: 'inventory_order_id', render: (p) => poLink(p.inventory_order_id) },
         { label: 'Received', key: 'received_date', render: (p) => fmtDate(p.received_date) },
-        { label: 'Installed', key: 'installed_date', render: (p) => fmtDate(p.installed_date) },
-      ], t.parts, { empty: 'No parts installed' })}</section>`;
+        { label: 'Installed', key: 'installed_date', render: (p) => html`${fmtDate(p.installed_date)}${p.removed_date ? html`<div class="small due over">replaced ${fmtDate(p.removed_date)}</div>` : ''}` },
+      ], t.parts, { empty: 'No parts installed' })}</section>
+    ${t.serviceJobs.length ? html`<section class="card" style="margin-top:16px"><div class="card-head"><h2>Service history</h2></div>${table([
+      { label: 'Job', key: 'id', render: (j) => html`<a class="mono" href="#/service/${j.id}">${j.id}</a>` },
+      { label: 'Failure', key: 'failure_report_id', render: (j) => (j.failure_report_id ? html`<a class="mono" href="#/quality/${j.failure_report_id}">${j.failure_report_id}</a>` : '—') },
+      { label: 'Part replaced', key: 'part_number', render: (j) => (j.part_number ? partLink(j.part_number) : '—') },
+      { label: 'Picked up', key: 'picked_up_date', render: (j) => fmtDate(j.picked_up_date ?? j.scheduled_pickup_date) },
+      { label: 'Returned', key: 'returned_date', render: (j) => fmtDate(j.returned_date) },
+      { label: 'Status', key: 'status' },
+    ], t.serviceJobs)}</section>` : ''}`;
 }
 
 DIALOGS.earmark = (data, done) => {

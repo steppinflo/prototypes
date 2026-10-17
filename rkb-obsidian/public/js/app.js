@@ -12,6 +12,10 @@ import { qualityView, failureView } from './views/quality.js';
 import { suppliersView, supplierView } from './views/suppliers.js';
 import { customersView, customerView } from './views/customers.js';
 import { aboutView } from './views/about.js';
+import { costsView } from './views/costs.js';
+import { serviceView, serviceJobView } from './views/service.js';
+import { notificationsView } from './views/notifications.js';
+import './views/escalations.js';
 
 const ROUTES = [
   [/^\/?$/, 'dashboard', dashboardView],
@@ -33,6 +37,10 @@ const ROUTES = [
   [/^\/customers$/, 'customers', customersView],
   [/^\/customers\/(.+)$/, 'customers', customerView],
   [/^\/about$/, 'about', aboutView],
+  [/^\/costs$/, 'costs', costsView],
+  [/^\/service$/, 'service', serviceView],
+  [/^\/service\/(.+)$/, 'service', serviceJobView],
+  [/^\/notifications$/, 'notifications', notificationsView],
 ];
 
 const view = document.getElementById('view');
@@ -99,9 +107,15 @@ document.addEventListener('click', async (e) => {
   const dlgBtn = e.target.closest('[data-dialog]');
   if (dlgBtn) {
     const opener = DIALOGS[dlgBtn.dataset.dialog];
-    if (opener) opener({ ...dlgBtn.dataset }, () => render({ keepScroll: true }));
+    if (opener) opener({ ...dlgBtn.dataset, ...(dlgBtn.dataset.payload ? JSON.parse(dlgBtn.dataset.payload) : {}) }, () => render({ keepScroll: true }));
     return;
   }
+
+  const tabBtn = e.target.closest('[data-tab]');
+  if (tabBtn) return setQuery({ tab: tabBtn.dataset.tab });
+
+  const rangeBtn = e.target.closest('[data-range-from]');
+  if (rangeBtn) return setQuery({ from: rangeBtn.dataset.rangeFrom, to: rangeBtn.dataset.rangeTo });
 
   if (e.target.id === 'reseed-btn') {
     if (!confirm('Rebuild all prototype data from the source dataset? Changes made in the portal will be lost.')) return;
@@ -118,10 +132,18 @@ document.addEventListener('click', async (e) => {
 });
 
 function describe(url, out) {
-  if (out.id && url.includes('/inventory-orders') && !url.includes('/receive') && !url.includes('/ship')) return `Placed ${out.id}`;
+  if (url.includes('/pickup')) return `Picked up — at the plant ${fmtDate(out.eta)}`;
+  if (url.includes('/arrive')) return 'Tractor received at the plant for repair';
+  if (url.includes('/service-jobs') && url.includes('/repair')) return `Repaired — on its way back, ETA ${fmtDate(out.eta)}`;
+  if (url.includes('/service-jobs') && url.includes('/return')) return 'Tractor back with the customer — job complete';
+  if (out.premium && !url.includes('/expedite')) return `Placed rush ${out.id}, due ${fmtDate(out.expected)} (+$${Math.round(out.premium).toLocaleString('en-US')} premium)`;
+  if (out.id && url.includes('/inventory-orders') && !url.includes('/receive') && !url.includes('/ship') && !url.includes('/expedite')) return `Placed ${out.id}`;
   if (out.received !== undefined) return `Received ${out.received} into stock${out.rejected ? `, ${out.rejected} rejected` : ''}`;
   if (out.tractors && url.includes('/builds')) return `Started ${out.tractors.length} build(s): ${out.tractors.map((t) => t.serial).join(', ')}`;
   if (out.shipmentId) return `Shipment ${out.shipmentId} booked, ETA ${fmtDate(out.eta)}`;
+  if (url.includes('/expedite')) return `Expedited ${out.id}: now due ${fmtDate(out.expected)} (+$${Math.round(out.premium).toLocaleString('en-US')})`;
+  if (url.includes('/rush')) return `${out.id} is now a rush order — builds moved up`;
+  if (url.includes('/ack')) return 'Acknowledged';
   if (out.status) return `Updated (${out.status})`;
   if (url.includes('/clear-hold')) return 'Replacement installed — released from QC hold';
   if (url.includes('/complete')) return 'Passed QC — build complete';
@@ -131,8 +153,13 @@ function describe(url, out) {
   return 'Done';
 }
 
-// Inline forms that POST their fields (e.g. planning assumptions).
+// Inline forms that POST their fields (e.g. planning assumptions), or that set URL filters.
 document.addEventListener('submit', async (e) => {
+  const qf = e.target.closest('form[data-query-form]');
+  if (qf) {
+    e.preventDefault();
+    return setQuery(Object.fromEntries(new FormData(qf).entries()));
+  }
   const form = e.target.closest('form[data-form-post]');
   if (!form) return;
   e.preventDefault();

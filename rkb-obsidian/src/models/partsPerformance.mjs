@@ -16,7 +16,7 @@ import { clamp, round, sum } from '../lib/util.mjs';
 
 const MIN_SAMPLE = 15;
 
-export function partsPerformance(db) {
+export function partsPerformance(db, { from = '0000-01-01', to = '9999-12-31' } = {}) {
   const parts = db.prepare('SELECT part_number, name, category FROM part_types').all();
   const suppliers = db.prepare('SELECT id, code, name, quoted_lead_days FROM suppliers').all();
   const pairs = db.prepare(`
@@ -25,17 +25,18 @@ export function partsPerformance(db) {
 
   const installs = new Map(db.prepare(`
     SELECT ip.part_number || '|' || ip.supplier_id AS k, SUM(tp.quantity) AS n
-    FROM tractor_parts tp JOIN inventory_parts ip ON ip.id = tp.inventory_part_id GROUP BY 1`).all().map((r) => [r.k, r.n]));
+    FROM tractor_parts tp JOIN inventory_parts ip ON ip.id = tp.inventory_part_id
+    WHERE tp.installed_date BETWEEN ? AND ? GROUP BY 1`).all(from, to).map((r) => [r.k, r.n]));
   const failures = db.prepare(`
     SELECT part_number || '|' || supplier_id AS k, stage, SUM(quantity) AS n
-    FROM failure_reports GROUP BY 1, 2`).all();
+    FROM failure_reports WHERE reported_date BETWEEN ? AND ? GROUP BY 1, 2`).all(from, to);
   const fail = (k, stage) => failures.find((f) => f.k === k && f.stage === stage)?.n ?? 0;
   const received = new Map(db.prepare(`
     SELECT part_number || '|' || supplier_id AS k, SUM(quantity_received + quantity_rejected) AS n, COUNT(*) AS pos,
            SUM(CASE WHEN actual_delivery_date <= expected_delivery_date THEN 1 ELSE 0 END) AS on_time,
            AVG(MAX(0, julianday(actual_delivery_date) - julianday(expected_delivery_date))) AS avg_late,
            AVG(julianday(actual_delivery_date) - julianday(expected_delivery_date)) AS avg_slip
-    FROM inventory_orders WHERE status = 'received' GROUP BY 1`).all().map((r) => [r.k, r]));
+    FROM inventory_orders WHERE status = 'received' AND actual_delivery_date BETWEEN ? AND ? GROUP BY 1`).all(from, to).map((r) => [r.k, r]));
 
   const rows = pairs.map((p) => {
     const k = `${p.part_number}|${p.supplier_id}`;
@@ -80,7 +81,7 @@ export function partsPerformance(db) {
            AVG(CASE WHEN actual_delivery_date <= expected_delivery_date THEN 1.0 ELSE 0 END) AS on_time,
            AVG(MAX(0, julianday(actual_delivery_date) - julianday(expected_delivery_date))) AS avg_late,
            AVG(julianday(actual_delivery_date) - julianday(expected_delivery_date)) AS avg_slip
-    FROM inventory_orders WHERE status = 'received' GROUP BY 1`).all().map((r) => [r.supplier_id, r]));
+    FROM inventory_orders WHERE status = 'received' AND actual_delivery_date BETWEEN ? AND ? GROUP BY 1`).all(from, to).map((r) => [r.supplier_id, r]));
 
   for (const r of rows) {
     const sup = supDelivery.get(r.supplierId) ?? { on_time: 0.5, avg_late: 5, avg_slip: 0 };

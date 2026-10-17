@@ -47,7 +47,7 @@ test('orders never have more tractors than they asked for, and delivered orders 
   assert.equal(one(`SELECT COUNT(*) AS n FROM customer_orders o
     WHERE (SELECT COUNT(*) FROM tractors t WHERE t.customer_order_id = o.id) > o.quantity`).n, 0);
   assert.equal(one(`SELECT COUNT(*) AS n FROM customer_orders o WHERE o.status = 'delivered'
-    AND (SELECT COUNT(*) FROM tractors t WHERE t.customer_order_id = o.id AND t.status = 'delivered') <> o.quantity`).n, 0);
+    AND (SELECT COUNT(*) FROM tractors t WHERE t.customer_order_id = o.id AND t.status IN ('delivered', 'in_repair')) <> o.quantity`).n, 0);
 });
 
 test('demo scenarios are present', () => {

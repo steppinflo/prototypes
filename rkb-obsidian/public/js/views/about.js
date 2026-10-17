@@ -30,6 +30,14 @@ export async function aboutView() {
       <p>For every part × supplier: failures at receiving inspection, in manufacturing/QC and in the field, normalised by units installed and compared with the average for that part category; plus on-time rate and average days late on that supplier's parts orders.</p>
       <p><code>score = 100 × (0.5 × quality + 0.3 × on-time rate + 0.2 × timeliness)</code>, with <code>quality = 1 − failure rate / (2 × category average)</code> and <code>timeliness = 1 − avg days late / 15</code>. Supplier reliability is the PO-weighted average of its part scores. The tracker flags parts failing at more than twice their category rate, and alternates that clearly outperform a primary supplier.</p>
 
+      <h2>Escalations &amp; costs</h2>
+      <p>Tasks carry the steps to resolve them: <b>rush</b> a parts order (+15%, half the quoted lead time) or expedite a late one, <b>rush</b> a customer order (its builds jump the queue, expedited freight),
+      <b>notify</b> the plant, a supplier or a customer, and <b>arrange pickup &amp; repair</b> for a tractor down at a customer site. The <b>Cost &amp; efficiency</b> page compares parts bought with what the
+      tractors customers actually ordered needed, for any date range, alongside inventory carrying cost (20%/yr), rush premiums, freight ($3.25/mile) and repair costs ($95/hour).
+      Inventory value is rebuilt day by day from receipts, consumption and scrap, and reconciles to the stock on hand.</p>
+      <p><b>Supplier quality</b> over any date range: monthly failure rate per 1,000 units installed and on-time delivery per supplier, recurring failure patterns (same part, supplier and symptom 3+ times),
+      lots with repeated failures, and supplier/part pairs late 3+ times — each can be raised with the supplier in one click.</p>
+
       <h2>The prototype data set</h2>
       <p>Seeded from <code>docs/synthetic_supply_chain_dataset.csv</code> (2020–2023, 10,000 rows), shifted forward ${meta.datasetYearShift} years so it ends around today; ${fmtNum(meta.datasetRowsUsed)} rows fall on or before today and are used. Data last seeded ${fmtDate(meta.seedDate, { year: true })}.</p>
       <ul>

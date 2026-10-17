@@ -317,3 +317,13 @@ td .row { flex-wrap: nowrap; }
   .task-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 8px; }
   .page-head .actions { margin-left: 0; }
 }
+
+/* Date range filter */
+.range { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.range input[type=date] { padding: 4px 8px; }
+.task-btns { max-width: 340px; }
+
+/* Tasks: actions on their own row under the text, due date on the left of that row. */
+.task { grid-template-columns: 4px minmax(0, 1fr); }
+.task-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.task-btns { max-width: none; justify-content: flex-end; }

@@ -3,9 +3,10 @@
 
 import {
   api, html, fmtNum, fmtPct, fmtDate, fmtMonth, seg, qs, table, statusBadge, severityBadge, pageHead, partLink,
-  supplierLink, tractorLink, customerLink, poLink, kpi, DIALOGS, openDialog, toast, actionBtn, stageLabel,
+  supplierLink, tractorLink, customerLink, poLink, kpi, DIALOGS, openDialog, toast, actionBtn, stageLabel, rangeControl, today, addDays,
 } from '../lib.js';
-import { barChart, hBars, legend, tipRows } from '../charts.js';
+import { barChart, lineChart, hBars, legend, tipRows } from '../charts.js';
+import { notificationList } from './notifications.js';
 
 const STAGES = [['receiving', 'Receiving', 'var(--s1)'], ['manufacturing', 'Manufacturing', 'var(--s2)'], ['field', 'Field', 'var(--s3)']];
 
@@ -13,55 +14,135 @@ export async function qualityView() {
   const q = qs();
   const stage = q.get('stage') ?? '';
   const status = q.get('fstatus') ?? 'unresolved';
-  const tab = q.get('tab') ?? 'perf';
+  const tab = q.get('tab') ?? 'recurring';
+  const metric = q.get('metric') ?? 'failureRate';
+  const to = q.get('to') ?? today();
+  const from = q.get('from') ?? addDays(to, -364);
   const [quality, failures] = await Promise.all([
-    api('/quality'),
-    api(`/failures?stage=${stage}&status=${status === 'all' ? '' : status}&limit=300`),
+    api(`/quality?from=${from}&to=${to}`),
+    api(`/failures?stage=${stage}&status=${status === 'all' ? '' : status}&from=${from}&to=${to}&limit=300`),
   ]);
   const perf = quality.performance;
   const count = (st, s) => quality.byStage.filter((r) => (!st || r.stage === st) && (!s || r.status === s)).reduce((a, r) => a + r.n, 0);
   const unresolved = quality.byStage.filter((r) => r.status !== 'resolved').reduce((a, r) => a + r.n, 0);
-  const months = [...new Set(quality.byMonth.map((r) => r.month))];
+  const months = quality.months;
   const monthSeries = STAGES.map(([k, l, c]) => ({ name: l, color: c, values: months.map((m) => quality.byMonth.find((r) => r.month === m && r.stage === k)?.n ?? 0) }));
-  const classes = [...new Set(quality.byClass.map((r) => r.failure_class))];
-  const classTotals = classes.map((c) => ({ c, n: quality.byClass.filter((r) => r.failure_class === c).reduce((a, r) => a + r.n, 0) })).sort((a, b) => b.n - a.n);
+  const worsening = quality.trends.filter((t) => t.worsening);
+  const rising = quality.recurring.filter((r) => r.trend === 'rising');
 
   return html`
-    ${pageHead({ title: 'Failures & issues', sub: 'Problems at receiving inspection, on the line and in the field — and what they say about each part and supplier.', actions: html`<button class="btn primary" data-dialog="log-failure" data-stage="field">+ Log failure</button>` })}
+    ${pageHead({ title: 'Failures & issues', sub: 'Problems at receiving inspection, on the line and in the field — and the patterns behind them, by part and supplier.',
+      actions: html`${rangeControl(quality.from, quality.to)}<button class="btn primary" data-dialog="log-failure" data-stage="field">+ Log failure</button>` })}
     <div class="kpis">
       ${kpi('Unresolved issues', fmtNum(unresolved), `${count('field', 'open')} new field reports`, unresolved > 0)}
-      ${kpi('Field failures', fmtNum(count('field')), 'all time, tractors in service')}
+      ${kpi('Field failures', fmtNum(count('field')), 'tractors in service, in period')}
       ${kpi('Manufacturing / QC', fmtNum(count('manufacturing')), 'caught before shipping')}
       ${kpi('Receiving rejects', fmtNum(count('receiving')), 'units failing inspection')}
-      ${kpi('Parts orders past quote', fmtNum(quality.lateOrders), 'open POs late vs. supplier date', quality.lateOrders > 0)}
-    </div>
-    <div class="grid cols-2" style="margin-bottom:16px">
-      <section class="card"><div class="card-head"><h2>Failures by month, last 12 months</h2></div>
-        ${legend(monthSeries)}
-        <div class="card-body">${barChart({ labels: months, series: monthSeries, height: 220, fmtLabel: (m) => fmtMonth(m), labelEvery: 2 })}</div></section>
-      <section class="card"><div class="card-head"><h2>Failure classes</h2></div>
-        <div class="card-body">${hBars(classTotals.slice(0, 10).map((c) => ({ label: c.c, value: c.n, color: 'var(--s1)',
-          tip: tipRows(c.c, STAGES.map(([k, l, col]) => [l, fmtNum(quality.byClass.find((r) => r.failure_class === c.c && r.stage === k)?.n ?? 0), col])) })))}</div></section>
+      ${kpi('Recurring patterns', fmtNum(quality.recurring.length), `${rising.length} rising in the second half of the period`, rising.length > 0)}
+      ${kpi('Suppliers getting worse', fmtNum(worsening.length), worsening.map((t) => t.code).join(', ') || 'none', worsening.length > 0)}
     </div>
 
     <section class="card" style="margin-bottom:16px">
-      <div class="tabs">${[['perf', 'Parts performance'], ['suppliers', 'Supplier reliability'], ['pareto', 'Worst parts']].map(([k, l]) =>
-        html`<button data-seg-tab="${k}" class="${k === tab ? 'on' : ''}" onclick="location.hash='#/quality?tab=${k}'">${l}</button>`)}</div>
-      ${tab === 'perf' ? perfTable(perf) : tab === 'suppliers' ? supplierBars(perf) : html`<div class="card-body" style="padding-top:12px">${hBars(quality.byPart.slice(0, 12).map((p) => ({
-        label: `${p.part_number} ${p.name}`, href: `#/parts/${p.part_number}`, value: p.n, color: 'var(--s2)', note: `${p.field} in field`,
-      })))}</div>`}
-      ${perf.flags.length ? html`<div class="card-body"><h3 style="margin:8px 0">Tracker flags</h3>${perf.flags.map((f) =>
-        html`<div class="callout ${f.type === 'quality_review' ? 'warn' : ''}" style="margin-bottom:6px">${f.type === 'quality_review' ? '⚠ Quality review: ' : '⇄ Sourcing: '}${f.message}</div>`)}</div>` : ''}
-      <div class="card-note">${perf.method}. Scores need ≥15 installed units for the quality term; smaller samples are held at 50.</div>
+      <div class="card-head"><h2>Supplier trends</h2>
+        <div class="right">${seg('metric', [['failureRate', 'Failures per 1,000 units'], ['onTimeRate', 'On-time delivery'], ['avgDaysLate', 'Avg days late']], metric)}</div></div>
+      ${supplierTrendChart(quality.trends, metric)}
+      <div class="card-note">3-month rolling average. Failures are per 1,000 units installed over the trailing 12 months. A supplier is flagged as getting worse when its failure rate rises 25%+ or on-time delivery drops 10+ points between the first and second half of the period.</div>
     </section>
+
+    <section class="card" style="margin-bottom:16px">
+      <div class="tabs">${[['recurring', `Recurring failures (${quality.recurring.length})`], ['lots', `Lot clusters (${quality.lotClusters.length})`], ['late', `Repeat late deliveries (${quality.lateDeliveries.length})`],
+        ['perf', 'Parts performance'], ['suppliers', 'Supplier reliability']].map(([k, l]) =>
+        html`<button class="${k === tab ? 'on' : ''}" data-tab="${k}">${l}</button>`)}</div>
+      ${tab === 'recurring' ? recurringTable(quality.recurring) : tab === 'lots' ? lotTable(quality.lotClusters) : tab === 'late' ? lateTable(quality.lateDeliveries)
+        : tab === 'perf' ? perfTable(perf) : supplierBars(perf)}
+      ${tab === 'perf' && perf.flags.length ? html`<div class="card-body"><h3 style="margin:8px 0">Tracker flags</h3>${perf.flags.map((f) =>
+        html`<div class="callout ${f.type === 'quality_review' ? 'warn' : ''}" style="margin-bottom:6px">${f.type === 'quality_review' ? '⚠ Quality review: ' : '⇄ Sourcing: '}${f.message}</div>`)}</div>` : ''}
+      ${tab === 'perf' || tab === 'suppliers' ? html`<div class="card-note">${perf.method}. Scores for the selected period; ≥15 installed units needed for the quality term.</div>` : ''}
+    </section>
+
+    <div class="grid cols-2" style="margin-bottom:16px">
+      <section class="card"><div class="card-head"><h2>Failures by month</h2></div>
+        ${legend(monthSeries)}
+        <div class="card-body">${barChart({ labels: months, series: monthSeries, height: 220, fmtLabel: (m) => fmtMonth(m), labelEvery: Math.max(1, Math.ceil(months.length / 12)) })}</div></section>
+      <section class="card"><div class="card-head"><h2>Worst parts in period</h2></div>
+        <div class="card-body">${hBars(quality.byPart.slice(0, 10).map((p) => ({
+          label: `${p.part_number} ${p.name}`, href: `#/parts/${p.part_number}`, value: p.n, color: 'var(--s2)', note: `${p.field} in field`,
+        })))}</div></section>
+    </div>
 
     <section class="card">
       <div class="card-head"><h2>Failure reports</h2>
         <div class="right">${seg('stage', [['', 'All stages'], ...STAGES.map(([k, l]) => [k, l])], stage)}
           ${seg('fstatus', [['unresolved', 'Unresolved'], ['open', 'Open'], ['investigating', 'Investigating'], ['resolved', 'Resolved'], ['all', 'All']], status)}</div></div>
       ${failuresTable(failures.rows)}
-      <div class="card-note">${failures.rows.length} of ${failures.total}</div>
+      <div class="card-note">${failures.rows.length} of ${failures.total} in the selected period</div>
     </section>`;
+}
+
+const SUPPLIER_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
+
+export function supplierTrendChart(trends, metric) {
+  const months = trends[0]?.months.map((m) => m.month) ?? [];
+  const fmt = metric === 'onTimeRate' ? (v) => fmtPct(v) : metric === 'avgDaysLate' ? (v) => `${fmtNum(v, 1)}d` : (v) => fmtNum(v, 1);
+  // 3-month rolling average so the direction is visible through monthly noise.
+  const smooth = (vals) => vals.map((_, i) => {
+    const w = vals.slice(Math.max(0, i - 2), i + 1).filter((v) => v !== null);
+    return w.length ? w.reduce((a, b) => a + b, 0) / w.length : null;
+  });
+  const raw = (t) => t.months.map((m) => (m[metric] === null ? null : metric === 'onTimeRate' ? m[metric] * 100 : m[metric]));
+  const series = trends.map((t, i) => ({
+    name: `${t.code}${t.worsening ? ' ▲ getting worse' : ''}`, color: SUPPLIER_COLORS[i % 5], values: smooth(raw(t)),
+  }));
+  if (!months.length) return html`<div class="empty">No data in range</div>`;
+  return html`${legend(series.map((s) => ({ ...s, line: true })))}
+    <div class="card-body">${lineChart({
+      labels: months, series, height: 240, labelEvery: Math.max(1, Math.ceil(months.length / 12)), fmtLabel: (m) => fmtMonth(m), yMin: 0,
+      tip: (i) => tipRows(`${fmtMonth(months[i])} (that month · 3-mo avg)`, trends.map((t, k) => [t.name,
+        `${t.months[i][metric] === null ? '—' : fmt(t.months[i][metric])} · ${series[k].values[i] === null ? '—' : fmt(metric === 'onTimeRate' ? series[k].values[i] / 100 : series[k].values[i])}`, SUPPLIER_COLORS[k % 5]])),
+    })}</div>`;
+}
+
+export function recurringTable(rows) {
+  return table([
+    { label: 'Pattern', key: 'symptom', render: (r) => html`<b>${r.symptom}</b><div class="small muted">${r.failureClass} · ${r.stages.map((x) => stageLabel[x]).join(', ')}</div>` },
+    { label: 'Part', key: 'partNumber', render: (r) => partLink(r.partNumber) },
+    { label: 'Supplier', key: 'supplierId', render: (r) => supplierLink(r.supplierId, r.supplierName) },
+    { label: 'Units', key: 'units', num: true },
+    { label: 'First – last', key: 'lastSeen', render: (r) => html`<span class="nowrap">${fmtDate(r.firstSeen)} – ${fmtDate(r.lastSeen)}</span>` },
+    { label: 'Trend', key: 'trend', render: (r) => html`<span class="badge ${r.trend === 'rising' ? 'critical' : r.trend === 'falling' ? 'good' : 'plain'}">${r.trend} ${r.earlierHalf}→${r.recentHalf}</span>` },
+    { label: 'Spread', key: 'customers', render: (r) => html`<span class="small">${r.customers} customers · ${r.lots} lots</span>` },
+    { label: 'Open', key: 'open', num: true },
+    { label: '', nosort: true, render: (r) => actionBtn({ label: 'Raise with supplier…', dialog: 'notify', data: {
+      recipientType: 'supplier', recipientId: r.supplierId, urgency: r.trend === 'rising' ? 'urgent' : 'normal', entity: 'part', entityId: r.partNumber,
+      subject: `Recurring failure: ${r.partNumber} — ${r.symptom}`,
+      body: `We have ${r.units} reports of "${r.symptom}" on ${r.partNumber} from your parts between ${r.firstSeen} and ${r.lastSeen} (${r.lots} lots, ${r.customers} customers). Please send root cause and a corrective action plan.` } }) },
+  ], rows, { empty: 'No pattern repeats 3+ times in this period', scroll: true });
+}
+
+function lotTable(rows) {
+  return table([
+    { label: 'Lot', key: 'lot_number', render: (r) => html`<span class="mono">${r.lot_number}</span>` },
+    { label: 'Part', key: 'part_number', render: (r) => partLink(r.part_number) },
+    { label: 'Supplier', key: 'supplier_id', render: (r) => supplierLink(r.supplier_id, r.supplier_name) },
+    { label: 'Failures', key: 'units', num: true, render: (r) => html`${r.units} <span class="muted small">of ${r.lot_size} in lot</span>` },
+    { label: 'Stages', key: 'stages', render: (r) => r.stages.split(',').map((x) => stageLabel[x]).join(', ') },
+    { label: 'First – last', key: 'last_seen', render: (r) => `${fmtDate(r.first_seen)} – ${fmtDate(r.last_seen)}` },
+  ], rows, { empty: 'No lot has more than one failure in this period', scroll: true });
+}
+
+function lateTable(rows) {
+  return table([
+    { label: 'Supplier', key: 'supplier_id', render: (r) => supplierLink(r.supplier_id, r.supplier_name) },
+    { label: 'Part', key: 'part_number', render: (r) => partLink(r.part_number) },
+    { label: 'Late', key: 'late', num: true, render: (r) => `${r.late} of ${r.pos}` },
+    { label: 'Late rate', key: 'lateRate', num: true, render: (r) => html`<span class="${r.lateRate > 0.5 ? 'due over' : ''}">${fmtPct(r.lateRate)}</span>` },
+    { label: 'Avg days late', key: 'avg_late', num: true, render: (r) => fmtNum(r.avg_late, 1) },
+    { label: 'Worst', key: 'worst', num: true, render: (r) => `${r.worst}d` },
+    { label: '', nosort: true, render: (r) => actionBtn({ label: 'Raise with supplier…', dialog: 'notify', data: {
+      recipientType: 'supplier', recipientId: r.supplier_id, urgency: 'normal', entity: 'part', entityId: r.part_number,
+      subject: `Repeated late deliveries: ${r.part_number}`,
+      body: `${r.late} of ${r.pos} orders for ${r.part_number} arrived late (avg ${r.avg_late} days, worst ${r.worst}). Please confirm realistic lead times or a recovery plan.` } }) },
+  ], rows, { empty: 'No supplier/part was late 3+ times in this period', scroll: true });
 }
 
 function perfTable(perf) {
@@ -109,6 +190,12 @@ export async function failureView(id) {
       title: html`<span class="mono">${f.id}</span> · ${stageLabel[f.stage]} failure`,
       sub: html`${f.part_name} · ${severityBadge(f.severity)} ${statusBadge(f.status)}`,
       actions: html`
+        ${f.stage === 'field' && f.status !== 'resolved' && f.tractorStatus === 'delivered' && !f.activeJob
+          ? actionBtn({ label: 'Arrange pickup & repair…', dialog: 'pickup', data: { failureId: f.id, rush: f.severity === 'critical' ? '1' : '' } }, 'btn primary') : ''}
+        ${f.activeJob ? html`<a class="btn" href="#/service/${f.activeJob.id}">Service job ${f.activeJob.id} →</a>` : ''}
+        ${actionBtn({ label: f.customer_id ? 'Notify customer…' : 'Notify supplier…', dialog: 'notify', data: f.customer_id
+          ? { recipientType: 'customer', recipientId: f.customer_id, urgency: 'normal', entity: 'failure', entityId: f.id, subject: `Your report ${f.id}`, body: `We are working on the ${f.part_name} issue on ${f.serial_number}.` }
+          : { recipientType: 'supplier', recipientId: f.supplier_id, urgency: 'normal', entity: 'failure', entityId: f.id, subject: `Quality issue ${f.id}: ${f.part_number}`, body: `${f.description}. Please investigate and advise.` } }, 'btn')}
         ${f.status === 'open' ? actionBtn({ label: 'Start investigation', url: `/failures/${f.id}/status`, body: { status: 'investigating' } }, 'btn') : ''}
         ${f.status !== 'resolved' ? html`<button class="btn primary" data-dialog="resolve-failure" data-id="${f.id}">Resolve…</button>` : actionBtn({ label: 'Reopen', url: `/failures/${f.id}/status`, body: { status: 'open' } }, 'btn')}`,
     })}
@@ -133,7 +220,14 @@ export async function failureView(id) {
       </dl>
       ${f.sameLotFailures.length ? html`<h3 style="margin:14px 0 6px">Other failures from lot ${f.lot_number}</h3>
         ${f.sameLotFailures.map((x) => html`<div class="small"><a class="mono" href="#/quality/${x.id}">${x.id}</a> · ${fmtDate(x.reported_date)} · ${x.stage} — ${x.description}</div>`)}` : ''}
-      </div></section>
+      </div>
+      ${f.serviceJobs.length ? html`<div class="card-head"><h2>Service jobs</h2></div>${table([
+        { label: 'Job', key: 'id', render: (j) => html`<a class="mono" href="#/service/${j.id}">${j.id}</a>` },
+        { label: 'Status', key: 'status' },
+        { label: 'Pickup', key: 'scheduled_pickup_date', render: (j) => fmtDate(j.scheduled_pickup_date) },
+        { label: 'Back by', key: 'expected_return_date', render: (j) => fmtDate(j.returned_date ?? j.expected_return_date) },
+      ], f.serviceJobs)}` : ''}
+      ${notificationList(f.notifications)}</section>
     </div>`;
 }
 

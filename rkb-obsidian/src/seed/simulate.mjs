@@ -14,6 +14,7 @@
 import {
   dayNum, isoDay, isWorkday, weekday, isoWeek, makeRng, transitDays, pad, round,
 } from '../lib/util.mjs';
+import { RUSH_PREMIUM, RUSH_SLIP_FACTOR, rushLeadDays, tractorFreight } from '../lib/costs.mjs';
 import {
   PLANT, TRACTOR_MODELS, SUPPLIERS, PART_TYPES, BOM, FAILURE_MODES, RECEIVING_ISSUES,
   CARRIERS_INBOUND, CARRIERS_OUTBOUND, CUSTOMERS, SEASONALITY, MODEL_POPULARITY,
@@ -150,6 +151,7 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
       failMult: Math.max(0.2, r.Component_Failure_Rate / 0.05),
       cancelN: rng() < 0.025 ? subN + rng.int(5, 20) : null,
       notes: rush ? 'Rush order' : (fleet ? 'Fleet order' : null),
+      priority: rush ? 'rush' : 'normal',
       sourceRow: r.sourceRow,
       tractors: [],
       cancelled: false,
@@ -186,15 +188,17 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
     m.set(day, (m.get(day) ?? 0) + qty);
   };
 
-  function placePo(pn, supplierId, qty, dayN, source = 'history') {
+  function placePo(pn, supplierId, qty, dayN, source = 'history', rush = false) {
     const sup = supplierMap.get(supplierId);
     const part = partMap.get(pn);
     const year = isoDay(dayN).slice(0, 4);
     poSeq += 1;
     const samples = delaySamples.get(supplierId);
-    const delay = Math.round(samples[Math.floor(rng() * samples.length)] * sup.delayFactor * 0.7);
-    const arrivalN = Math.max(dayN + 7, dayN + sup.quoted_lead_days - 6 + delay);
+    const delay = Math.round(samples[Math.floor(rng() * samples.length)] * sup.delayFactor * 0.7 * (rush ? RUSH_SLIP_FACTOR : 1));
+    const lead = rush ? rushLeadDays(sup.quoted_lead_days) : sup.quoted_lead_days;
+    const arrivalN = rush ? Math.max(dayN + 4, dayN + lead - 2 + delay) : Math.max(dayN + 7, dayN + lead - 6 + delay);
     const isPrimary = part.suppliers[0] === supplierId;
+    const unitCost = round(part.unit_cost * (isPrimary ? 1 : 1.06) * (1.035 ** yearsSince(dayN)), 2);
     const po = {
       id: `PO-${year}-${pad(poSeq, 5)}`,
       part_number: pn,
@@ -202,9 +206,11 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
       quantity: qty,
       quantity_received: 0,
       quantity_rejected: 0,
-      unit_cost: round(part.unit_cost * (isPrimary ? 1 : 1.06) * (1.035 ** yearsSince(dayN)), 2),
+      unit_cost: unitCost,
+      rush: rush ? 1 : 0,
+      rush_premium: rush ? round(qty * unitCost * RUSH_PREMIUM, 2) : 0,
       subN: dayN,
-      expN: dayN + sup.quoted_lead_days,
+      expN: dayN + lead,
       arrivalN,
       shippedN: arrivalN - transitDays(sup.lat, sup.lng, PLANT.lat, PLANT.lng),
       arrived: false,
@@ -379,6 +385,8 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
       destination: `${order.customer.name} — ${order.delivery_address}`,
       destination_lat: order.customer.lat, destination_lng: order.customer.lng,
       shippedN: dayN, etaN, arrivalN, tractors: ready, order,
+      rush: order.priority === 'rush' ? 1 : 0,
+      freight_cost: tractorFreight(PLANT.lat, PLANT.lng, order.customer.lat, order.customer.lng, ready.length, order.priority === 'rush'),
     };
     shipments.push(sh);
     for (const t of ready) {
@@ -519,6 +527,19 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
     // Weekly purchasing run (Mondays): reactive reorder policy covering firm orders
     // over the next ~75 days plus a month of recent average usage.
     if (weekday(d) === 1) {
+      // First, expedite parts that firm orders due in the next 5 weeks can't otherwise get in time.
+      for (const part of PART_TYPES) {
+        const pn = part.part_number;
+        let soon = 0;
+        for (const o of open) {
+          if (!isOpen(o) || o.expN > d + 35) continue;
+          const per = BOM[o.model].find(([p]) => p === pn);
+          if (per) soon += (o.qty - o.tractors.length) * per[1];
+        }
+        const arriving = pos.reduce((acc, po) => acc + (po.part_number === pn && !po.arrived && po.expN <= d + 14 ? po.quantity : 0), 0);
+        const gap = Math.ceil(soon * 1.15) - available(pn) - arriving;
+        if (gap > 0) placePo(pn, part.suppliers[0], Math.max(part.min_order_qty, Math.ceil(gap / part.pack_size) * part.pack_size), d, 'history', true);
+      }
       for (const part of PART_TYPES) {
         const pn = part.part_number;
         let firm = 0;
@@ -535,7 +556,8 @@ export function simulate({ csvRows, today, seed = 20261016, buildBays = 3 }) {
         let qty = Math.ceil((target * 1.15 - position) / part.pack_size) * part.pack_size;
         qty = Math.max(qty, part.min_order_qty);
         const supplierId = part.suppliers.length > 1 && rng() > 0.72 ? part.suppliers[1] : part.suppliers[0];
-        placePo(pn, supplierId, qty, d);
+        // Planners expedite when the position is badly short (and sometimes out of caution).
+        placePo(pn, supplierId, qty, d, 'history', position < target * 0.4 || rng() < 0.03);
       }
     }
   }

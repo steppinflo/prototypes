@@ -5,6 +5,7 @@
 import { tx, logActivity, getSetting } from '../db/index.mjs';
 import { dayNum, isoDay, addDays, isoWeek, transitDays, pad } from '../lib/util.mjs';
 import { CARRIERS_INBOUND, CARRIERS_OUTBOUND } from '../seed/catalog.mjs';
+import { RUSH_PREMIUM, rushLeadDays, tractorFreight, haulLeg, repairLabor } from '../lib/costs.mjs';
 import { ACTIVE_ORDER_STATUSES } from '../models/inventoryPlan.mjs';
 
 export class ApiError extends Error {
@@ -48,7 +49,7 @@ export function refreshOrderStatus(db, orderId, today) {
 
 // ---- Purchasing --------------------------------------------------------------------
 
-export function placeInventoryOrder(db, today, { partNumber, supplierId, quantity, source = 'manual', notes = null }) {
+export function placeInventoryOrder(db, today, { partNumber, supplierId, quantity, source = 'manual', notes = null, rush = false }) {
   const qty = Number(quantity);
   if (!partNumber || !supplierId || !(qty > 0)) throw new ApiError(400, 'partNumber, supplierId and a positive quantity are required');
   const sp = db.prepare('SELECT * FROM supplier_parts WHERE part_number = ? AND supplier_id = ?').get(partNumber, supplierId);
@@ -56,11 +57,33 @@ export function placeInventoryOrder(db, today, { partNumber, supplierId, quantit
   const plant = plantOf(db);
   return tx(db, () => {
     const id = `PO-${today.slice(0, 4)}-${pad(nextGlobalSeq(db, 'inventory_orders', 'id', 8), 5)}`;
+    const lead = rush ? rushLeadDays(sp.quoted_lead_days) : sp.quoted_lead_days;
+    const premium = rush ? Math.round(qty * sp.unit_cost * RUSH_PREMIUM * 100) / 100 : 0;
     db.prepare(`INSERT INTO inventory_orders (id, part_number, supplier_id, quantity, unit_cost, status, submission_date,
-      expected_delivery_date, delivery_address, warehouse_id, source, notes) VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?)`)
-      .run(id, partNumber, supplierId, qty, sp.unit_cost, today, addDays(today, sp.quoted_lead_days), plant.address, plant.id, source, notes);
-    logActivity(db, 'place_po', 'inventory_order', id, `Placed ${id}: ${qty} × ${partNumber} from ${supplierId}${source === 'model_recommendation' ? ' (model recommendation)' : ''}`);
-    return { id };
+      expected_delivery_date, delivery_address, warehouse_id, source, rush, rush_premium, notes)
+      VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, partNumber, supplierId, qty, sp.unit_cost, today, addDays(today, lead), plant.address, plant.id, source, rush ? 1 : 0, premium, notes);
+    logActivity(db, 'place_po', 'inventory_order', id, `Placed ${rush ? 'RUSH ' : ''}${id}: ${qty} × ${partNumber} from ${supplierId}`
+      + `${source === 'model_recommendation' ? ' (model recommendation)' : ''}${rush ? `, +$${premium.toLocaleString('en-US')} premium` : ''}`);
+    return { id, rush: !!rush, premium, expected: addDays(today, lead) };
+  });
+}
+
+/** Convert an open order that hasn't shipped yet into a rush order (15% premium on what's outstanding). */
+export function expediteInventoryOrder(db, today, id) {
+  const po = db.prepare('SELECT * FROM inventory_orders WHERE id = ?').get(id);
+  if (!po) throw notFound('Inventory order', id);
+  if (!['submitted', 'confirmed'].includes(po.status)) throw new ApiError(409, `${id} is ${po.status}; only orders that haven't shipped can be expedited`);
+  if (po.rush) throw new ApiError(409, `${id} is already a rush order`);
+  const sp = db.prepare('SELECT * FROM supplier_parts WHERE part_number = ? AND supplier_id = ?').get(po.part_number, po.supplier_id);
+  const rushDate = addDays(today, Math.max(3, Math.ceil(rushLeadDays(sp.quoted_lead_days) / 2)));
+  const expected = rushDate < po.expected_delivery_date || po.expected_delivery_date < today ? rushDate : po.expected_delivery_date;
+  const remaining = po.quantity - po.quantity_received - po.quantity_rejected;
+  const premium = Math.round(remaining * po.unit_cost * RUSH_PREMIUM * 100) / 100;
+  return tx(db, () => {
+    db.prepare("UPDATE inventory_orders SET rush = 1, rush_premium = ?, expected_delivery_date = ?, status = 'confirmed' WHERE id = ?").run(premium, expected, id);
+    logActivity(db, 'expedite_po', 'inventory_order', id, `Expedited ${id}: now due ${expected}, +$${premium.toLocaleString('en-US')} premium`);
+    return { id, expected, premium };
   });
 }
 
@@ -143,11 +166,12 @@ function checkParts(db, model, count) {
 }
 
 function installPart(db, tractorId, partNumber, qty, today) {
+  const used = [];
   const lots = db.prepare(`SELECT * FROM inventory_parts WHERE part_number = ? AND status = 'in_stock' AND quantity_on_hand > 0
     ORDER BY received_date, id`).all(partNumber);
   let need = qty;
   const upsert = db.prepare(`INSERT INTO tractor_parts (tractor_id, inventory_part_id, part_number, quantity, installed_date)
-    VALUES (?, ?, ?, ?, ?) ON CONFLICT(tractor_id, inventory_part_id) DO UPDATE SET quantity = quantity + excluded.quantity`);
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT(tractor_id, inventory_part_id, installed_date) DO UPDATE SET quantity = quantity + excluded.quantity`);
   for (const ip of lots) {
     if (need === 0) break;
     const take = Math.min(need, ip.quantity_on_hand);
@@ -159,8 +183,10 @@ function installPart(db, tractorId, partNumber, qty, today) {
       db.prepare('UPDATE inventory_parts SET quantity_on_hand = ?, status = ? WHERE id = ?').run(left, left ? 'in_stock' : 'consumed', ip.id);
     }
     upsert.run(tractorId, ip.id, partNumber, take, today);
+    used.push(ip.id);
   }
   if (need > 0) throw new ApiError(409, `Not enough ${partNumber} on hand`);
+  return used;
 }
 
 export function startBuilds(db, today, { orderId = null, model = null, count = 1 }) {
@@ -262,12 +288,15 @@ export function shipOrder(db, today, orderId) {
   const plant = plantOf(db);
   return tx(db, () => {
     const shId = nextId(db, 'shipments', 'SH-', 5);
-    const eta = addDays(today, transitDays(plant.lat, plant.lng, o.lat, o.lng));
+    const rush = o.priority === 'rush';
+    const eta = addDays(today, Math.max(1, transitDays(plant.lat, plant.lng, o.lat, o.lng) - (rush ? 1 : 0)));
+    const freight = tractorFreight(plant.lat, plant.lng, o.lat, o.lng, ready.length, rush);
     db.prepare(`INSERT INTO shipments (id, direction, customer_order_id, carrier, tracking_number, origin, origin_lat, origin_lng,
       destination, destination_lat, destination_lng, shipped_date, expected_arrival_date, status)
       VALUES (?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_transit')`)
       .run(shId, orderId, CARRIERS_OUTBOUND[Math.floor(Math.random() * CARRIERS_OUTBOUND.length)], trackingNumber('HF'),
         plant.name, plant.lat, plant.lng, `${o.customer_name} — ${o.delivery_address}`, o.lat, o.lng, today, eta);
+    db.prepare('UPDATE shipments SET rush = ?, freight_cost = ? WHERE id = ?').run(rush ? 1 : 0, freight, shId);
     for (const t of ready) {
       db.prepare("UPDATE tractors SET status = 'shipping', ship_date = ? WHERE id = ?").run(today, t.id);
       db.prepare('INSERT INTO shipment_tractors (shipment_id, tractor_id) VALUES (?, ?)').run(shId, t.id);
@@ -283,6 +312,8 @@ export function deliverShipment(db, today, shipmentId) {
   if (!sh) throw notFound('Shipment', shipmentId);
   if (sh.status !== 'in_transit') throw new ApiError(409, `${shipmentId} is ${sh.status}`);
   if (sh.direction === 'inbound') return receiveInventoryOrder(db, today, sh.inventory_order_id);
+  if (sh.direction === 'service_pickup') return serviceArrive(db, today, sh.service_job_id);
+  if (sh.direction === 'service_return') return serviceReturn(db, today, sh.service_job_id);
   return tx(db, () => {
     db.prepare("UPDATE shipments SET status = 'delivered', actual_arrival_date = ? WHERE id = ?").run(today, shipmentId);
     db.prepare(`UPDATE tractors SET status = 'delivered', delivered_date = ?
@@ -308,6 +339,19 @@ export function createOrder(db, today, { customerId, model, quantity, expectedDe
       .run(id, customerId, model, qty, today, expectedDeliveryDate, deliveryAddress || c.primary_address, c.region, m.list_price, notes || null);
     logActivity(db, 'create_order', 'customer_order', id, `New order ${id}: ${qty} × ${model} for ${c.name}, due ${expectedDeliveryDate}`);
     return { id };
+  });
+}
+
+/** Mark a customer order as a rush job: its builds jump the queue and it ships with expedited freight. */
+export function rushOrder(db, today, orderId) {
+  const o = db.prepare('SELECT * FROM customer_orders WHERE id = ?').get(orderId);
+  if (!o) throw notFound('Order', orderId);
+  if (!ACTIVE_ORDER_STATUSES.includes(o.status)) throw new ApiError(409, `${orderId} is ${o.status}`);
+  if (o.priority === 'rush') throw new ApiError(409, `${orderId} is already a rush order`);
+  return tx(db, () => {
+    db.prepare("UPDATE customer_orders SET priority = 'rush' WHERE id = ?").run(orderId);
+    logActivity(db, 'rush_order', 'customer_order', orderId, `${orderId} marked rush: builds move to the front of the queue, expedited freight (+15%)`);
+    return { id: orderId, priority: 'rush' };
   });
 }
 
@@ -340,7 +384,7 @@ export function createFailure(db, today, input) {
     customerId = tractor.status === 'delivered' || tractor.status === 'shipping' ? tractor.customer_id : null;
     if (!ip && partNumber) {
       ip = db.prepare(`SELECT ip.* FROM tractor_parts tp JOIN inventory_parts ip ON ip.id = tp.inventory_part_id
-        WHERE tp.tractor_id = ? AND tp.part_number = ? LIMIT 1`).get(tractor.id, partNumber);
+        WHERE tp.tractor_id = ? AND tp.part_number = ? AND tp.removed_date IS NULL LIMIT 1`).get(tractor.id, partNumber);
     }
   }
   if (ip) {
@@ -407,4 +451,159 @@ export function updateSettings(db, body) {
     logActivity(db, 'settings', 'settings', 'planning', `Planning settings changed: ${Object.entries(changed).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   });
   return changed;
+}
+
+// ---- Notifications -----------------------------------------------------------------
+
+export function sendNotification(db, today, { recipientType, recipientId, subject, body, urgency = 'normal', entity = null, entityId = null }) {
+  const lookup = {
+    site: 'SELECT name FROM warehouses WHERE id = ?',
+    supplier: 'SELECT name FROM suppliers WHERE id = ?',
+    customer: 'SELECT name FROM customers WHERE id = ?',
+  }[recipientType];
+  if (!lookup) throw new ApiError(400, 'recipientType must be site, supplier or customer');
+  const r = db.prepare(lookup).get(recipientId);
+  if (!r) throw new ApiError(400, `Unknown ${recipientType} ${recipientId}`);
+  if (!subject || !body) throw new ApiError(400, 'Subject and message are required');
+  return tx(db, () => {
+    const id = nextId(db, 'notifications', 'NT-', 5);
+    db.prepare(`INSERT INTO notifications (id, created_date, recipient_type, recipient_id, recipient_name, subject, body, urgency, entity, entity_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')`).run(id, today, recipientType, recipientId, r.name, subject, body, urgency, entity, entityId);
+    logActivity(db, 'notify', entity ?? 'notification', entityId ?? id, `${urgency === 'urgent' ? 'URGENT ' : ''}notice to ${r.name}: ${subject}`);
+    return { id, recipient: r.name };
+  });
+}
+
+export function acknowledgeNotification(db, today, id) {
+  const n = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id);
+  if (!n) throw notFound('Notification', id);
+  db.prepare("UPDATE notifications SET status = 'acknowledged', acknowledged_date = ? WHERE id = ?").run(today, id);
+  return { id, status: 'acknowledged' };
+}
+
+// ---- Service jobs: pickup, repair at the plant, return ------------------------------
+
+const jobOf = (db, id) => {
+  const j = db.prepare(`SELECT j.*, c.name AS customer_name, c.lat, c.lng, t.serial_number
+    FROM service_jobs j JOIN customers c ON c.id = j.customer_id JOIN tractors t ON t.id = j.tractor_id WHERE j.id = ?`).get(id);
+  if (!j) throw notFound('Service job', id);
+  return j;
+};
+
+function serviceShipment(db, today, j, toPlant) {
+  const plant = plantOf(db);
+  const shId = nextId(db, 'shipments', 'SH-', 5);
+  const days = Math.max(1, transitDays(j.lat, j.lng, plant.lat, plant.lng) - (j.rush ? 1 : 0));
+  const site = `${j.customer_name} — ${j.pickup_address}`;
+  db.prepare(`INSERT INTO shipments (id, direction, service_job_id, rush, freight_cost, carrier, tracking_number, origin, origin_lat, origin_lng,
+    destination, destination_lat, destination_lng, shipped_date, expected_arrival_date, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_transit')`)
+    .run(shId, toPlant ? 'service_pickup' : 'service_return', j.id, j.rush, haulLeg(j.lat, j.lng, plant.lat, plant.lng, !!j.rush),
+      CARRIERS_OUTBOUND[Math.floor(Math.random() * CARRIERS_OUTBOUND.length)], trackingNumber('SV'),
+      toPlant ? site : plant.name, toPlant ? j.lat : plant.lat, toPlant ? j.lng : plant.lng,
+      toPlant ? plant.name : site, toPlant ? plant.lat : j.lat, toPlant ? plant.lng : j.lng, today, addDays(today, days));
+  db.prepare('INSERT INTO shipment_tractors (shipment_id, tractor_id) VALUES (?, ?)').run(shId, j.tractor_id);
+  return { shId, days, eta: addDays(today, days) };
+}
+
+/** Book a carrier to collect a damaged tractor from the customer's site for repair at the plant. */
+export function scheduleServiceJob(db, today, { failureId = null, tractorId = null, partNumber = null, rush = false, pickupDate = null, notes = null }) {
+  const f = failureId ? db.prepare('SELECT * FROM failure_reports WHERE id = ?').get(failureId) : null;
+  if (failureId && !f) throw notFound('Failure report', failureId);
+  const tid = f?.tractor_id ?? tractorId;
+  const t = tid ? db.prepare(`SELECT t.*, o.customer_id, c.primary_address, c.lat, c.lng FROM tractors t
+    JOIN customer_orders o ON o.id = t.customer_order_id JOIN customers c ON c.id = o.customer_id WHERE t.id = ? OR t.serial_number = ?`).get(tid, tid) : null;
+  if (!t) throw new ApiError(400, 'A delivered tractor is required for a pickup');
+  if (t.status !== 'delivered') throw new ApiError(409, `${t.serial_number} is ${t.status}, not at a customer site`);
+  const active = db.prepare("SELECT id FROM service_jobs WHERE tractor_id = ? AND status != 'completed'").get(t.id);
+  if (active) throw new ApiError(409, `${t.serial_number} already has service job ${active.id}`);
+  const pickup = pickupDate && pickupDate >= today ? pickupDate : addDays(today, rush ? 0 : 1);
+  const plant = plantOf(db);
+  const days = Math.max(1, transitDays(t.lat, t.lng, plant.lat, plant.lng) - (rush ? 1 : 0));
+  const pn = partNumber ?? f?.part_number ?? null;
+  const cat = pn ? db.prepare('SELECT category FROM part_types WHERE part_number = ?').get(pn)?.category : null;
+  const repairDays = ['engine', 'transmission', 'cab'].includes(cat) ? 4 : 2;
+  return tx(db, () => {
+    const id = nextId(db, 'service_jobs', 'SJ-', 5);
+    const haul = 2 * haulLeg(t.lat, t.lng, plant.lat, plant.lng, !!rush);
+    const ret = addDays(pickup, 2 * days + repairDays);
+    db.prepare(`INSERT INTO service_jobs (id, tractor_id, customer_id, failure_report_id, part_number, status, rush, pickup_address,
+      scheduled_pickup_date, expected_return_date, haul_cost, notes, created_date) VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, t.id, t.customer_id, f?.id ?? null, pn, rush ? 1 : 0, t.primary_address, pickup, ret, haul, notes, today);
+    if (f && f.status === 'open') db.prepare("UPDATE failure_reports SET status = 'investigating' WHERE id = ?").run(f.id);
+    logActivity(db, 'schedule_pickup', 'service_job', id, `${rush ? 'Rush ' : ''}pickup of ${t.serial_number} scheduled ${pickup} for repair (${id}); back by ${ret}`);
+    return { id, pickupDate: pickup, expectedReturn: ret, haulCost: haul };
+  });
+}
+
+export function servicePickup(db, today, id) {
+  const j = jobOf(db, id);
+  if (j.status !== 'scheduled') throw new ApiError(409, `${id} is ${j.status}`);
+  return tx(db, () => {
+    const { shId, eta } = serviceShipment(db, today, j, true);
+    db.prepare("UPDATE service_jobs SET status = 'in_transit_to_plant', picked_up_date = ? WHERE id = ?").run(today, id);
+    db.prepare("UPDATE tractors SET status = 'in_repair' WHERE id = ?").run(j.tractor_id);
+    logActivity(db, 'service_pickup', 'service_job', id, `${j.serial_number} collected from ${j.customer_name} (${shId}), at plant ${eta}`);
+    return { id, shipmentId: shId, eta };
+  });
+}
+
+export function serviceArrive(db, today, id) {
+  const j = jobOf(db, id);
+  if (j.status !== 'in_transit_to_plant') throw new ApiError(409, `${id} is ${j.status}`);
+  return tx(db, () => {
+    db.prepare("UPDATE shipments SET status = 'delivered', actual_arrival_date = ? WHERE service_job_id = ? AND direction = 'service_pickup' AND status = 'in_transit'").run(today, id);
+    db.prepare("UPDATE service_jobs SET status = 'in_repair' WHERE id = ?").run(id);
+    logActivity(db, 'service_arrive', 'service_job', id, `${j.serial_number} arrived at the plant for repair`);
+    return { id, status: 'in_repair' };
+  });
+}
+
+/** Replace the failed part from stock (keeping traceability), then truck the tractor back. */
+export function serviceRepair(db, today, id) {
+  const j = jobOf(db, id);
+  if (j.status !== 'in_repair') throw new ApiError(409, `${id} is ${j.status}`);
+  const part = j.part_number ? db.prepare('SELECT * FROM part_types WHERE part_number = ?').get(j.part_number) : null;
+  if (part) {
+    const avail = db.prepare('SELECT available FROM v_part_balances WHERE part_number = ?').get(part.part_number).available;
+    if (avail < 1) throw new ApiError(409, `No ${part.part_number} on hand for the repair — order one (rush) first`, { short: [{ partNumber: part.part_number, need: 1, available: 0 }] });
+  }
+  return tx(db, () => {
+    let replacement = null;
+    let partsCost = 0;
+    if (part) {
+      if (part.serialized) {
+        const old = db.prepare('SELECT inventory_part_id FROM tractor_parts WHERE tractor_id = ? AND part_number = ? AND removed_date IS NULL LIMIT 1').get(j.tractor_id, part.part_number);
+        if (old) {
+          db.prepare("UPDATE inventory_parts SET status = 'scrapped', tractor_id = NULL WHERE id = ?").run(old.inventory_part_id);
+          db.prepare('UPDATE tractor_parts SET removed_date = ? WHERE tractor_id = ? AND inventory_part_id = ?').run(today, j.tractor_id, old.inventory_part_id);
+        }
+      }
+      replacement = installPart(db, j.tractor_id, part.part_number, 1, today)[0];
+      partsCost = db.prepare(`SELECT io.unit_cost FROM inventory_parts ip LEFT JOIN inventory_orders io ON io.id = ip.inventory_order_id
+        WHERE ip.id = ?`).get(replacement)?.unit_cost ?? part.unit_cost;
+    }
+    const labor = repairLabor(part?.category);
+    const { shId, eta } = serviceShipment(db, today, j, false);
+    db.prepare(`UPDATE service_jobs SET status = 'returning', repair_complete_date = ?, expected_return_date = ?, repair_labor_cost = ?,
+      repair_parts_cost = ?, replacement_part_id = ? WHERE id = ?`).run(today, eta, labor, partsCost, replacement ?? null, id);
+    logActivity(db, 'service_repair', 'service_job', id, `Repaired ${j.serial_number}${part ? ` (new ${part.part_number})` : ''}; returning to ${j.customer_name} (${shId}), ETA ${eta}`);
+    return { id, shipmentId: shId, eta, replacementPartId: replacement ?? null };
+  });
+}
+
+export function serviceReturn(db, today, id) {
+  const j = jobOf(db, id);
+  if (j.status !== 'returning') throw new ApiError(409, `${id} is ${j.status}`);
+  return tx(db, () => {
+    db.prepare("UPDATE shipments SET status = 'delivered', actual_arrival_date = ? WHERE service_job_id = ? AND direction = 'service_return' AND status = 'in_transit'").run(today, id);
+    db.prepare("UPDATE service_jobs SET status = 'completed', returned_date = ? WHERE id = ?").run(today, id);
+    db.prepare("UPDATE tractors SET status = 'delivered' WHERE id = ?").run(j.tractor_id);
+    if (j.failure_report_id) {
+      db.prepare("UPDATE failure_reports SET status = 'resolved', resolved_date = ?, resolution = ? WHERE id = ?")
+        .run(today, `Collected from site and repaired at plant (${id})`, j.failure_report_id);
+    }
+    logActivity(db, 'service_return', 'service_job', id, `${j.serial_number} returned to ${j.customer_name}; ${id} complete`);
+    return { id, status: 'completed' };
+  });
 }

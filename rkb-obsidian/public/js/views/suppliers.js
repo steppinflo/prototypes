@@ -1,9 +1,10 @@
 // Suppliers: reliability score (from parts performance tracking), delivery and quality history.
 
 import {
-  api, html, fmtNum, fmtPct, fmtDate, fmtMonth, fmtMoney, table, statusBadge, pageHead, partLink, poLink, kpi, daysBetween, severityBadge,
+  api, html, fmtNum, fmtPct, fmtDate, fmtMonth, fmtMoney, table, statusBadge, pageHead, partLink, poLink, kpi, daysBetween, severityBadge, actionBtn,
 } from '../lib.js';
 import { barChart } from '../charts.js';
+import { supplierTrendChart, recurringTable } from './quality.js';
 
 const scoreColor = (v) => (v >= 60 ? 'var(--good)' : v >= 45 ? 'var(--warning)' : 'var(--critical)');
 const scoreWord = (v) => (v >= 60 ? 'Reliable' : v >= 45 ? 'Watch' : 'At risk');
@@ -27,7 +28,8 @@ export async function suppliersView() {
 }
 
 export async function supplierView(id) {
-  const s = await api(`/suppliers/${encodeURIComponent(id)}`);
+  const [s, trends] = await Promise.all([api(`/suppliers/${encodeURIComponent(id)}`), api(`/quality/trends?supplier=${encodeURIComponent(id)}`)]);
+  const t = trends.trends[0];
   const p = s.performance;
   const md = s.monthlyDelivery;
   return html`
@@ -35,7 +37,11 @@ export async function supplierView(id) {
       crumbs: html`<a href="#/suppliers">Suppliers</a> /`,
       title: s.name,
       sub: html`${s.code} · ${s.primary_address} · ${fmtNum(s.lat, 2)}, ${fmtNum(s.lng, 2)}`,
+      actions: actionBtn({ label: 'Notify supplier…', dialog: 'notify', data: { recipientType: 'supplier', recipientId: s.id, urgency: 'normal', entity: null, entityId: null,
+        subject: `Performance review — ${s.name}`, body: `Over the last 12 months: ${Math.round((p.onTimeRate ?? 0) * 100)}% on-time, ${p.avgDaysLate} days late on average, ${p.failuresPer100Installed} failures per 100 units. ` } }, 'btn'),
     })}
+    ${t?.worsening ? html`<div class="callout bad" style="margin-bottom:16px"><b>Getting worse:</b> failure rate ${t.direction.failureRate.before} → ${t.direction.failureRate.after} per 1,000 units,
+      on-time ${Math.round(t.direction.onTime.before * 100)}% → ${Math.round(t.direction.onTime.after * 100)}% (first vs. second half of the last 12 months).</div>` : ''}
     <div class="kpis">
       <div class="kpi" style="display:flex;gap:12px;align-items:center">${scoreRing(s.reliability_score)}<div><div class="label">Reliability score</div><div class="hint">${scoreWord(s.reliability_score)} · PO-weighted part scores</div></div></div>
       ${kpi('On-time delivery', fmtPct(p.onTimeRate), `${p.purchaseOrders} orders received`)}
@@ -60,6 +66,11 @@ export async function supplierView(id) {
           { label: 'Status', key: 'status', render: (r) => statusBadge(r.status) },
         ], s.openOrders, { empty: 'No open orders' })}</section>
     </div>
+    <div class="grid cols-2" style="margin-bottom:16px">
+      <section class="card"><div class="card-head"><h2>Failures per 1,000 units, last 12 months</h2></div>${supplierTrendChart(trends.trends, 'failureRate')}</section>
+      <section class="card"><div class="card-head"><h2>Days late per delivery, last 12 months</h2></div>${supplierTrendChart(trends.trends, 'avgDaysLate')}</section>
+    </div>
+    <section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Recurring issues, last 12 months</h2></div>${recurringTable(trends.recurring)}</section>
     <section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Parts supplied — performance</h2></div>
       ${table([
         { label: 'Part', key: 'partNumber', render: (r) => html`${partLink(r.partNumber)} <span class="muted small">${r.partName}</span>` },

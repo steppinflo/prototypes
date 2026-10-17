@@ -4,6 +4,7 @@ import {
   api, html, fmtMoney, fmtDate, seg, qs, table, statusBadge, pageHead, orderLink, customerLink,
   tractorLink, modelSwatch, actionBtn, DIALOGS, openDialog, toast, addDays, today, setQuery, daysBetween,
 } from '../lib.js';
+import { notificationList } from './notifications.js';
 
 const ORDER_STEPS = [['received', 'Received'], ['in_production', 'In production'], ['ready', 'Ready'], ['shipping', 'Shipping'], ['delivered', 'Delivered']];
 
@@ -26,7 +27,7 @@ export async function ordersView() {
         { label: 'Expected delivery', key: 'expected_delivery_date', render: (o) => fmtDate(o.expected_delivery_date) },
         { label: 'Delivered', key: 'actual_delivery_date', render: (o) => html`${fmtDate(o.actual_delivery_date)}${o.actual_delivery_date && o.actual_delivery_date > o.expected_delivery_date ? html` <span class="due over small">+${daysBetween(o.expected_delivery_date, o.actual_delivery_date)}d</span>` : ''}` },
         { label: 'Value', key: 'unit_price', num: true, sort: (o) => o.unit_price * o.quantity, render: (o) => fmtMoney(o.unit_price * o.quantity) },
-        { label: 'Status', key: 'status', render: (o) => html`${statusBadge(o.status)} ${o.risk ? statusBadge(o.risk.severity) : ''}` },
+        { label: 'Status', key: 'status', render: (o) => html`${statusBadge(o.status)} ${o.priority === 'rush' ? html`<span class="badge high">Rush</span>` : ''} ${o.risk ? statusBadge(o.risk.severity) : ''}` },
       ], data.rows, { empty: 'No orders match' })}
       <div class="card-note">${data.rows.length} of ${data.total} orders</div>
     </section>`;
@@ -59,11 +60,16 @@ export async function orderView(id) {
   return html`
     ${pageHead({
       crumbs: html`<a href="#/orders">Customer orders</a> /`,
-      title: html`${o.id} · ${o.quantity} × ${o.model_number}`,
+      title: html`${o.id} · ${o.quantity} × ${o.model_number}${o.priority === 'rush' ? html` <span class="badge high">Rush</span>` : ''}`,
       sub: html`${customerLink(o.customer_id, o.customer_name)} · submitted ${fmtDate(o.submission_date)} · expected ${fmtDate(o.expected_delivery_date)}`,
       actions: active ? html`
         ${remaining > 0 ? actionBtn({ label: `Start ${remaining} build${remaining > 1 ? 's' : ''}`, url: '/builds', body: { orderId: o.id, count: remaining } }, 'btn') : ''}
         ${ready ? actionBtn({ label: `Ship ${ready} ready tractor${ready > 1 ? 's' : ''}`, url: `/orders/${o.id}/ship`, body: {} }, 'btn primary') : ''}
+        ${o.priority !== 'rush' ? actionBtn({ label: 'Rush this order', url: `/orders/${o.id}/rush`, body: {}, confirm: `Rush ${o.id}? Its builds move to the front of the queue and it ships with expedited freight (+15%).` }, 'btn') : ''}
+        ${actionBtn({ label: 'Notify plant…', dialog: 'notify', data: { recipientType: 'site', recipientId: 'WH-IL', urgency: 'urgent', entity: 'customer_order', entityId: o.id,
+          subject: `Prioritise ${o.id} (${o.customer_name})`, body: `${o.id}: ${o.quantity} × ${o.model_number} due ${o.expected_delivery_date}. Please prioritise its builds.` } }, 'btn')}
+        ${actionBtn({ label: 'Update customer…', dialog: 'notify', data: { recipientType: 'customer', recipientId: o.customer_id, urgency: 'normal', entity: 'customer_order', entityId: o.id,
+          subject: `Your order ${o.id}`, body: `An update on your order of ${o.quantity} × ${o.model_number}, expected ${o.expected_delivery_date}: ` } }, 'btn')}
         ${!o.tractors.some((t) => ['shipping', 'delivered'].includes(t.status)) ? actionBtn({ label: 'Cancel order', url: `/orders/${o.id}/cancel`, body: {}, confirm: `Cancel ${o.id}? Its tractors return to stock.` }, 'btn danger') : ''}` : '',
     })}
     ${o.status === 'cancelled' ? html`<div class="callout warn" style="margin-bottom:16px">This order was cancelled.</div>` : html`
@@ -129,7 +135,8 @@ export async function orderView(id) {
           { label: 'Part', key: 'part_number' },
           { label: 'Stage', key: 'stage' },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], o.failures, { empty: 'No failures reported on these tractors' })}</section>
+        ], o.failures, { empty: 'No failures reported on these tractors' })}
+        ${notificationList(o.notifications)}</section>
     </div>`;
 }
 

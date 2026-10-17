@@ -84,7 +84,7 @@ const STATUS = {
   received: ['Received', 'info'], in_production: ['In production', 'info'], ready: ['Ready to ship', 'good'],
   shipping: ['Shipping', 'info'], partially_delivered: ['Part delivered', 'info'], delivered: ['Delivered', 'plain'], cancelled: ['Cancelled', 'plain'],
   // tractors
-  qc_hold: ['QC hold', 'high'], inventoried: ['In stock', 'good'], earmarked: ['Earmarked', 'info'],
+  qc_hold: ['QC hold', 'high'], inventoried: ['In stock', 'good'], earmarked: ['Earmarked', 'info'], in_repair: ['In repair', 'medium'],
   // POs & shipments
   submitted: ['Submitted', 'plain'], confirmed: ['Confirmed', 'plain'], in_transit: ['In transit', 'info'],
   // parts
@@ -122,11 +122,28 @@ export function pageHead({ title, sub, crumbs, actions }) {
     </div>${actions ? html`<div class="actions">${actions}</div>` : ''}</div>`;
 }
 
-/** Button that POSTs to the API when clicked (handled by a delegated listener in app.js). */
+/**
+ * Button for an action: either POSTs to the API ({url, body}) or opens a named dialog
+ * ({dialog, data}). Both are handled by delegated listeners in app.js.
+ */
 export function actionBtn(action, cls = 'btn small') {
   if (!action) return '';
+  if (action.dialog) {
+    return html`<button class="${cls}" data-dialog="${action.dialog}" data-payload="${JSON.stringify(action.data ?? {})}">${action.label}</button>`;
+  }
   return html`<button class="${cls}" data-post="${action.url}" data-body="${JSON.stringify(action.body ?? {})}"
     ${action.confirm ? raw(`data-confirm="${esc(action.confirm)}"`) : ''}>${action.label}</button>`;
+}
+
+/** Date-range filter: preset buttons plus custom from/to, stored in the URL query. */
+export function rangeControl(from, to) {
+  const t = today();
+  const presets = [['30d', 'Last 30 days', addDays(t, -29)], ['90d', '90 days', addDays(t, -89)], ['ytd', 'Year to date', `${t.slice(0, 4)}-01-01`],
+    ['12m', '12 months', addDays(t, -364)], ['3y', '3 years', addDays(t, -3 * 365 + 1)]];
+  return html`<form class="range" data-query-form>
+    <div class="seg">${presets.map(([k, l, f]) => html`<button type="button" data-range-from="${f}" data-range-to="${t}" class="${from === f && to === t ? 'on' : ''}">${l}</button>`)}</div>
+    <input type="date" name="from" value="${from}" max="${t}"><span class="muted">to</span><input type="date" name="to" value="${to}" max="${t}">
+    <button class="btn small">Apply</button></form>`;
 }
 
 /** Sortable table. columns: [{key, label, num, render(row), sort(row)}] */

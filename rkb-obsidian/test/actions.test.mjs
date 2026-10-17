@@ -6,6 +6,17 @@ import * as actions from '../src/api/actions.mjs';
 const db = seededDb();
 const balance = (pn) => db.prepare('SELECT available, pending FROM v_part_balances WHERE part_number = ?').get(pn);
 
+/** Receive enough of every short part to build `count` of a model. */
+function stockKit(model, count) {
+  for (const b of db.prepare('SELECT * FROM bom_items WHERE model_number = ?').all(model)) {
+    const short = b.quantity * count - balance(b.part_number).available;
+    if (short <= 0) continue;
+    const sup = db.prepare('SELECT supplier_id FROM supplier_parts WHERE part_number = ? AND is_primary = 1').get(b.part_number).supplier_id;
+    const { id } = actions.placeInventoryOrder(db, TODAY, { partNumber: b.part_number, supplierId: sup, quantity: short });
+    actions.receiveInventoryOrder(db, TODAY, id);
+  }
+}
+
 test('placing and receiving a parts order moves units from pending to available', () => {
   const before = balance('HRN-01');
   const { id } = actions.placeInventoryOrder(db, TODAY, { partNumber: 'HRN-01', supplierId: 'SUP-D', quantity: 20 });
@@ -25,6 +36,7 @@ test('a supplier cannot be ordered a part it does not supply', () => {
 
 test('build -> complete -> ship -> deliver keeps order and parts consistent', () => {
   const order = actions.createOrder(db, TODAY, { customerId: 'CUS-001', model: 'TX-100', quantity: 1, expectedDeliveryDate: '2026-12-01' });
+  stockKit('TX-100', 1);
   const before = balance('ENG-25').available;
   const { tractors } = actions.startBuilds(db, '2026-10-19', { orderId: order.id, count: 1 });
   assert.equal(balance('ENG-25').available, before - 1);
@@ -56,7 +68,11 @@ test('clearing a QC hold installs a replacement and resolves the failure', () =>
 });
 
 test('earmarking checks model and order capacity', () => {
-  const stock = db.prepare("SELECT * FROM tractors WHERE status = 'inventoried' AND customer_order_id IS NULL").get();
+  stockKit('TX-200', 1);
+  const { tractors } = actions.startBuilds(db, '2026-10-22', { model: 'TX-200', count: 1 });
+  actions.completeBuild(db, '2026-10-23', tractors[0].id);
+  const stock = db.prepare('SELECT * FROM tractors WHERE id = ?').get(tractors[0].id);
+  assert.equal(stock.status, 'inventoried');
   const wrong = db.prepare("SELECT id FROM customer_orders WHERE status = 'received' AND model_number != ?").get(stock.model_number);
   assert.throws(() => actions.earmarkTractor(db, TODAY, stock.id, { orderId: wrong.id }), /is for/);
 });

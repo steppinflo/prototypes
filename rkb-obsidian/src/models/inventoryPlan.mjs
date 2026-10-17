@@ -19,6 +19,7 @@
 
 import { dayNum, isoDay, isWorkday, weekStart, transitDays, round, sum } from '../lib/util.mjs';
 import { expectedLossRate } from './partsPerformance.mjs';
+import { RUSH_PREMIUM, RUSH_SLIP_FACTOR, rushLeadDays } from '../lib/costs.mjs';
 
 export const ACTIVE_ORDER_STATUSES = ['received', 'in_production', 'ready', 'shipping', 'partially_delivered'];
 const COVER_DAYS = 30;
@@ -87,7 +88,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
     for (let i = 0; i < unbuilt; i++) {
       bumpWeek(dayNum(o.expected_delivery_date), 'firmToBuild');
       items.push({
-        source: 'firm', model: o.model_number, orderId: o.id, customerId: o.customer_id,
+        source: 'firm', model: o.model_number, orderId: o.id, customerId: o.customer_id, rush: o.priority === 'rush',
         customerName: o.customer_name, expectedDelivery: o.expected_delivery_date, transit, needByN: shipByN,
       });
     }
@@ -145,8 +146,10 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
     const latestStartN = prevWorkday(it.needByN - 1);
     return { ...it, latestStartN, shortParts: [] };
   });
-  for (const b of toBuild.filter((x) => x.source === 'firm')) {
-    let slot = Math.max(todayN, b.latestStartN - FIRM_BUILD_AHEAD);
+  // Rush orders jump the queue: built at the first free slot from today.
+  const firmBuilds = toBuild.filter((x) => x.source === 'firm').sort((a, b) => (b.rush ? 1 : 0) - (a.rush ? 1 : 0) || a.needByN - b.needByN);
+  for (const b of firmBuilds) {
+    let slot = Math.max(todayN, b.rush ? todayN : b.latestStartN - FIRM_BUILD_AHEAD);
     while (!free(slot)) slot += 1;
     take(slot);
     b.buildN = slot;
@@ -185,7 +188,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
 
   const scheduledReceipts = openPos.map((po) => {
     const perf = perfBy.get(`${po.part_number}|${po.supplier_id}`);
-    const slip = Math.round(perf?.predictedSlipDays ?? 0);
+    const slip = Math.round((perf?.predictedSlipDays ?? 0) * (po.rush ? RUSH_SLIP_FACTOR : 1));
     let arrivalN;
     let basis;
     if (po.eta) {
@@ -201,7 +204,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
     }
     return {
       poId: po.id, partNumber: po.part_number, supplierId: po.supplier_id, supplierName: po.supplier_name,
-      quantity: po.quantity - po.quantity_received - po.quantity_rejected, status: po.status,
+      quantity: po.quantity - po.quantity_received - po.quantity_rejected, status: po.status, rush: !!po.rush,
       expectedDelivery: po.expected_delivery_date, predictedArrival: isoDay(arrivalN), basis,
       overdue: po.expected_delivery_date < today, availableN: arrivalN + recvDays,
     };
@@ -251,18 +254,17 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
       if (proj < 0 && shortageN === null) shortageN = d;
       if (projR < safety && req > 0 && d <= endN && !planned.some((p) => p.arriveN > d)) {
         // Size the order to restore safety stock and cover the next COVER_DAYS of requirements,
-        // net of POs already on their way in that window (a late PO is chased, not re-bought).
+        // net of POs already on their way (a late PO is chased, not re-bought) —
+        // net of POs already on their way that land no later than a new order could.
+        const choice = chooseSupplier(supplierOptions.get(pn), perfBy, suppliers, d, todayN, recvDays);
+        const arriveN = Math.max(d, todayN + choice.effectiveLead);
         let ahead = 0;
         let incoming = 0;
-        for (let k = d + 1; k <= d + COVER_DAYS; k++) {
-          ahead += reqByDay.get(k) ?? 0;
-          incoming += recByDay.get(k) ?? 0;
-        }
+        for (let k = d + 1; k <= d + COVER_DAYS; k++) ahead += reqByDay.get(k) ?? 0;
+        for (let k = d + 1; k <= Math.max(d + COVER_DAYS, arriveN); k++) incoming += recByDay.get(k) ?? 0;
         const deficit = safety - projR + ahead - incoming;
         if (deficit > 0) {
           const qty = Math.max(part.min_order_qty, Math.ceil(deficit / part.pack_size) * part.pack_size);
-          const choice = chooseSupplier(supplierOptions.get(pn), perfBy, suppliers, d, todayN, recvDays);
-          const arriveN = Math.max(d, todayN + choice.effectiveLead);
           planned.push({ needN: d, qty, choice, arriveN });
           plannedByDay.set(arriveN, (plannedByDay.get(arriveN) ?? 0) + qty);
           if (arriveN === d) projR += qty;
@@ -296,6 +298,19 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
       const blocking = p.blocking ?? [];
       const firmBlocked = blocking.filter((b) => b.source === 'firm');
       const impacted = [...new Map(firmBlocked.map((b) => [b.orderId, { orderId: b.orderId, customerId: b.customerId, customerName: b.customerName, expectedDelivery: b.expectedDelivery }])).values()];
+      // When the normal order lands late, offer the fastest expedited alternative.
+      let rushOption = null;
+      if (p.arriveN > p.needN) {
+        const fastest = rushChoice(supplierOptions.get(pn), perfBy, suppliers, recvDays);
+        const rushArriveN = todayN + fastest.effectiveLead;
+        if (rushArriveN < p.arriveN) {
+          rushOption = {
+            supplierId: fastest.supplierId, supplierName: fastest.supplierName, effectiveLeadDays: fastest.effectiveLead,
+            expectedAvailable: isoDay(rushArriveN), daysLate: Math.max(0, rushArriveN - p.needN),
+            premium: round(p.qty * fastest.unitCost * RUSH_PREMIUM, 2), cost: round(p.qty * fastest.unitCost * (1 + RUSH_PREMIUM), 2),
+          };
+        }
+      }
       recommendations.push({
         key: `${pn}|${isoDay(p.needN)}`,
         partNumber: pn,
@@ -316,6 +331,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
         buildsBlocked: blocking.length,
         firmBuildsBlocked: firmBlocked.length,
         impactedOrders: impacted,
+        rushOption,
       });
     }
 
@@ -355,7 +371,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
       quantity: o.quantity, expectedDelivery: o.expected_delivery_date,
       unitsAtRisk: bs.length, daysLate: worst, severity: worst > 0 ? 'late' : 'at_risk',
       shortParts: [...new Set(bs.flatMap((b) => b.shortParts))],
-      capacityConstrained: bs.some((b) => b.buildN > b.latestStartN),
+      capacityConstrained: bs.some((b) => b.buildN > b.latestStartN), priority: o.priority,
     });
   }
 
@@ -397,7 +413,7 @@ export function inventoryPlan(db, { today, forecast, performance, settings }) {
     demandWeekly,
     buildWeeks,
     builds: builds.map((b) => ({
-      seq: b.seq, model: b.model, source: b.source, orderId: b.orderId ?? null, customerId: b.customerId ?? null,
+      seq: b.seq, model: b.model, source: b.source, rush: !!b.rush, orderId: b.orderId ?? null, customerId: b.customerId ?? null,
       customerName: b.customerName ?? null, expectedDelivery: b.expectedDelivery ?? null,
       expectedSubmission: b.expectedSubmission ?? null,
       needBy: isoDay(b.needByN), latestStart: isoDay(b.latestStartN), buildDate: isoDay(b.buildN),
@@ -419,6 +435,17 @@ function partStatus(planned, todayN) {
   if (planned.some((p) => p.arriveN > p.needN)) return 'critical';
   if (planned.some((p) => p.needN - p.choice.effectiveLead <= todayN + 7)) return 'order_now';
   return planned.length ? 'planned' : 'ok';
+}
+
+/** Fastest expedited source for a part: half the quoted lead, a fraction of the usual slip. */
+function rushChoice(options, perfBy, suppliers, recvDays) {
+  return options.map((sp) => {
+    const slip = Math.round((perfBy.get(`${sp.part_number}|${sp.supplier_id}`)?.predictedSlipDays ?? 0) * RUSH_SLIP_FACTOR);
+    return {
+      supplierId: sp.supplier_id, supplierName: suppliers.get(sp.supplier_id).name, unitCost: sp.unit_cost,
+      effectiveLead: rushLeadDays(sp.quoted_lead_days) + slip + recvDays,
+    };
+  }).sort((a, b) => a.effectiveLead - b.effectiveLead || a.unitCost - b.unitCost)[0];
 }
 
 /**

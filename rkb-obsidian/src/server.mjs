@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
-import { openDb, recreateDb, getSetting, DEFAULT_DB_PATH, PROJECT_ROOT } from './db/index.mjs';
+import { openDb, recreateDb, getSetting, DEFAULT_DB_PATH, PROJECT_ROOT, SCHEMA_VERSION } from './db/index.mjs';
 import { seedDatabase } from './seed/index.mjs';
 import { matchRoute } from './api/routes.mjs';
 import { todayIso, diffDays } from './lib/util.mjs';
@@ -44,6 +44,13 @@ function ensureDatabase() {
       reason = 'database schema missing';
     }
     if (!reason && (!seedDate || diffDays(today, seedDate) > STALE_DAYS)) reason = `data seeded ${seedDate ?? 'never'}, older than ${STALE_DAYS} days`;
+  }
+  if (!reason && exists) {
+    let version = 0;
+    try {
+      version = Number(getSetting(db, 'schema_version', 0));
+    } catch { /* no settings table */ }
+    if (version !== SCHEMA_VERSION) reason = `schema changed (v${SCHEMA_VERSION})`;
   }
   if (reason) {
     db?.close();

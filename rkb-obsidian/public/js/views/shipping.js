@@ -2,7 +2,7 @@
 
 import {
   api, html, fmtDate, seg, qs, table, statusBadge, pageHead, partLink, poLink, orderLink, customerLink,
-  supplierLink, actionBtn, today, daysBetween, kpi, fmtNum,
+  supplierLink, actionBtn, today, daysBetween, kpi, fmtNum, fmtMoney,
 } from '../lib.js';
 
 function progress(s) {
@@ -24,6 +24,7 @@ export async function shippingView() {
   const rows = await api(`/shipments?status=${status}&limit=${status === 'in_transit' ? 300 : 120}`);
   const inbound = rows.filter((r) => r.direction === 'inbound');
   const outbound = rows.filter((r) => r.direction === 'outbound');
+  const service = rows.filter((r) => r.direction.startsWith('service'));
   const lateIn = inbound.filter((r) => r.late).length;
   const lateOut = outbound.filter((r) => r.late).length;
   return html`
@@ -56,7 +57,20 @@ export async function shippingView() {
         { label: 'Shipped', key: 'shipped_date', render: (s) => fmtDate(s.shipped_date) },
         { label: 'ETA', key: 'expected_arrival_date', render: etaCell },
         { label: 'Customer expects', key: 'order_expected', render: (s) => html`${fmtDate(s.order_expected)}${s.late ? html` <span class="badge critical">Late</span>` : ''}` },
+        { label: 'Freight', key: 'freight_cost', num: true, render: (s) => html`${fmtMoney(s.freight_cost)}${s.rush ? html` <span class="badge high">Rush</span>` : ''}` },
         { label: 'Progress', key: 'p', nosort: true, render: progress },
         { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: 'Mark delivered', url: `/shipments/${s.id}/deliver`, body: {} }) : statusBadge(s.status)) },
-      ], outbound, { empty: 'No tractors in transit' })}</section>`;
+      ], outbound, { empty: 'No tractors in transit' })}</section>
+    <section class="card" style="margin-top:16px"><div class="card-head"><h2>Service hauls — tractors to and from repair</h2></div>
+      ${table([
+        { label: 'Shipment', key: 'id', render: (s) => html`<span class="mono">${s.id}</span>` },
+        { label: 'Job', key: 'service_job_id', render: (s) => html`<a class="mono" href="#/service/${s.service_job_id}">${s.service_job_id}</a>` },
+        { label: 'Leg', key: 'direction', render: (s) => (s.direction === 'service_pickup' ? 'Customer → plant' : 'Plant → customer') },
+        { label: 'From', key: 'origin' },
+        { label: 'To', key: 'destination' },
+        { label: 'Shipped', key: 'shipped_date', render: (s) => fmtDate(s.shipped_date) },
+        { label: 'ETA', key: 'expected_arrival_date', render: etaCell },
+        { label: 'Cost', key: 'freight_cost', num: true, render: (s) => html`${fmtMoney(s.freight_cost)}${s.rush ? html` <span class="badge high">Rush</span>` : ''}` },
+        { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: s.direction === 'service_pickup' ? 'Arrived at plant' : 'Returned', url: `/shipments/${s.id}/deliver`, body: {} }) : statusBadge(s.status)) },
+      ], service, { empty: 'No service hauls' })}</section>`;
 }

@@ -99,6 +99,7 @@ CREATE TABLE customer_orders (
   delivery_address       TEXT NOT NULL,
   region                 TEXT NOT NULL,      -- Warehouse_Location in the source dataset
   unit_price             REAL NOT NULL,
+  priority               TEXT NOT NULL DEFAULT 'normal', -- normal | rush (rush orders jump the build queue)
   notes                  TEXT
 );
 
@@ -119,6 +120,8 @@ CREATE TABLE inventory_orders (
   delivery_address       TEXT NOT NULL,
   warehouse_id           TEXT NOT NULL REFERENCES warehouses(id),
   source                 TEXT NOT NULL,      -- history | manual | model_recommendation
+  rush                   INTEGER NOT NULL DEFAULT 0,  -- expedited: shorter lead time for a premium
+  rush_premium           REAL NOT NULL DEFAULT 0,     -- extra cost paid for expediting ($)
   notes                  TEXT
 );
 
@@ -145,7 +148,7 @@ CREATE TABLE tractors (
   serial_number        TEXT NOT NULL UNIQUE,
   model_number         TEXT NOT NULL REFERENCES tractor_models(model_number),
   lot_number           TEXT NOT NULL,        -- build batch
-  status               TEXT NOT NULL,        -- in_production | qc_hold | inventoried | earmarked | shipping | delivered
+  status               TEXT NOT NULL,        -- in_production | qc_hold | inventoried | earmarked | shipping | delivered | in_repair
   customer_order_id    TEXT REFERENCES customer_orders(id),
   warehouse_id         TEXT NOT NULL REFERENCES warehouses(id),
   build_start_date     TEXT NOT NULL,
@@ -163,14 +166,18 @@ CREATE TABLE tractor_parts (
   part_number       TEXT NOT NULL REFERENCES part_types(part_number),
   quantity          INTEGER NOT NULL,
   installed_date    TEXT NOT NULL,
-  PRIMARY KEY (tractor_id, inventory_part_id)
+  removed_date      TEXT,                   -- set when the unit is replaced in a repair
+  PRIMARY KEY (tractor_id, inventory_part_id, installed_date)
 );
 
 CREATE TABLE shipments (
   id                    TEXT PRIMARY KEY,    -- SH-00123
-  direction             TEXT NOT NULL,       -- inbound (parts) | outbound (tractors)
+  direction             TEXT NOT NULL,       -- inbound (parts) | outbound (tractors) | service_pickup | service_return
   inventory_order_id    TEXT REFERENCES inventory_orders(id),
   customer_order_id     TEXT REFERENCES customer_orders(id),
+  service_job_id        TEXT REFERENCES service_jobs(id),
+  rush                  INTEGER NOT NULL DEFAULT 0,
+  freight_cost          REAL NOT NULL DEFAULT 0, -- what RKB pays the carrier (parts freight is in the supplier price)
   carrier               TEXT NOT NULL,
   tracking_number       TEXT NOT NULL,
   origin                TEXT NOT NULL,
@@ -209,6 +216,45 @@ CREATE TABLE failure_reports (
   status             TEXT NOT NULL,          -- open | investigating | resolved
   resolution         TEXT,
   resolved_date      TEXT
+);
+
+-- Damaged tractors collected from a customer site, repaired at the plant and returned.
+CREATE TABLE service_jobs (
+  id                   TEXT PRIMARY KEY,    -- SJ-00012
+  tractor_id           TEXT NOT NULL REFERENCES tractors(id),
+  customer_id          TEXT NOT NULL REFERENCES customers(id),
+  failure_report_id    TEXT REFERENCES failure_reports(id),
+  part_number          TEXT REFERENCES part_types(part_number), -- part to replace
+  status               TEXT NOT NULL,       -- scheduled | in_transit_to_plant | in_repair | returning | completed
+  rush                 INTEGER NOT NULL DEFAULT 0,
+  pickup_address       TEXT NOT NULL,
+  scheduled_pickup_date TEXT NOT NULL,
+  picked_up_date       TEXT,
+  repair_complete_date TEXT,
+  expected_return_date TEXT NOT NULL,
+  returned_date        TEXT,
+  haul_cost            REAL NOT NULL DEFAULT 0,
+  repair_labor_cost    REAL NOT NULL DEFAULT 0,
+  repair_parts_cost    REAL NOT NULL DEFAULT 0,
+  replacement_part_id  TEXT REFERENCES inventory_parts(id),
+  notes                TEXT,
+  created_date         TEXT NOT NULL
+);
+
+-- Messages sent to plant/yards, suppliers or customers about an issue.
+CREATE TABLE notifications (
+  id              TEXT PRIMARY KEY,         -- NT-00007
+  created_date    TEXT NOT NULL,
+  recipient_type  TEXT NOT NULL,            -- site | supplier | customer
+  recipient_id    TEXT NOT NULL,            -- warehouse / supplier / customer id
+  recipient_name  TEXT NOT NULL,
+  subject         TEXT NOT NULL,
+  body            TEXT NOT NULL,
+  urgency         TEXT NOT NULL DEFAULT 'normal', -- normal | urgent
+  entity          TEXT,                     -- what it is about (order, PO, failure, tractor, part)
+  entity_id       TEXT,
+  status          TEXT NOT NULL,            -- sent | acknowledged
+  acknowledged_date TEXT
 );
 
 -- Monthly aggregates of the source dataset: economic + market context for the forecast.
@@ -255,6 +301,12 @@ CREATE INDEX idx_fr_part_supplier   ON failure_reports(part_number, supplier_id)
 CREATE INDEX idx_fr_tractor         ON failure_reports(tractor_id);
 CREATE INDEX idx_ship_order         ON shipments(customer_order_id);
 CREATE INDEX idx_ship_po            ON shipments(inventory_order_id);
+CREATE INDEX idx_ship_job           ON shipments(service_job_id);
+CREATE INDEX idx_sj_tractor         ON service_jobs(tractor_id);
+CREATE INDEX idx_sj_failure         ON service_jobs(failure_report_id);
+CREATE INDEX idx_nt_entity          ON notifications(entity, entity_id);
+CREATE INDEX idx_tp_installed       ON tractor_parts(installed_date);
+CREATE INDEX idx_fr_date            ON failure_reports(reported_date);
 
 -- Diagram: Inventory of Parts - Part Number/ID, Balance/Available Quantity, Pending Balance, Part Name
 CREATE VIEW v_part_balances AS

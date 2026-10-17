@@ -205,7 +205,9 @@ export function recommendationsTable(recs) {
     { label: 'Needed', key: 'needDate', render: (r) => html`${fmtDate(r.needDate)}${r.daysLate ? html`<div class="due over small">arrives ${r.daysLate}d late</div>` : ''}` },
     { label: 'Cost', key: 'cost', num: true, render: (r) => fmtMoney(r.cost) },
     { label: 'Blocking', key: 'buildsBlocked', render: (r) => html`${r.buildsBlocked ? `${r.buildsBlocked} builds` : 'Safety stock'}${r.impactedOrders.length ? html`<div class="small">${r.impactedOrders.map((o) => html`<a class="chip" href="#/orders/${o.orderId}">${o.customerName}</a> `)}</div>` : ''}` },
-    { label: '', nosort: true, render: (r) => actionBtn({ label: 'Place PO', url: '/inventory-orders', body: { partNumber: r.partNumber, supplierId: r.supplierId, quantity: r.quantity, source: 'model_recommendation' } }, 'btn small primary') },
+    { label: '', nosort: true, render: (r) => html`<div class="row">${actionBtn({ label: 'Place PO', url: '/inventory-orders', body: { partNumber: r.partNumber, supplierId: r.supplierId, quantity: r.quantity, source: 'model_recommendation' } }, `btn small ${r.rushOption ? '' : 'primary'}`)}
+      ${r.rushOption ? actionBtn({ label: `Rush · +${fmtMoney(r.rushOption.premium)}`, url: '/inventory-orders', body: { partNumber: r.partNumber, supplierId: r.rushOption.supplierId, quantity: r.quantity, source: 'model_recommendation', rush: true } }, 'btn small primary') : ''}</div>
+      ${r.rushOption ? html`<div class="small muted">rush lands ${fmtDate(r.rushOption.expectedAvailable)}${r.rushOption.daysLate ? `, ${r.rushOption.daysLate}d late` : ', on time'}</div>` : ''}` },
   ], recs, { empty: 'No purchases needed right now' });
 }
 

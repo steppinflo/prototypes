@@ -5,8 +5,21 @@ import { runModels, invalidateModels, readSettings } from '../models/index.mjs';
 import { ACTIVE_ORDER_STATUSES } from '../models/inventoryPlan.mjs';
 import { recreateDb, getSetting } from '../db/index.mjs';
 import { seedDatabase } from '../seed/index.mjs';
-import { transitDays, sum } from '../lib/util.mjs';
+import { transitDays, sum, addDays } from '../lib/util.mjs';
+import { partsPerformance } from '../models/partsPerformance.mjs';
+import { costReport } from '../analytics/costs.mjs';
+import { qualityTrends } from '../analytics/quality.mjs';
 import * as actions from './actions.mjs';
+
+/** ?from=&to= with defaults (last 12 months); dates are clamped to today. */
+function rangeOf(query, today, defaultDays = 365) {
+  const valid = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
+  let to = valid(query.get('to')) ? query.get('to') : today;
+  if (to > today) to = today;
+  let from = valid(query.get('from')) ? query.get('from') : addDays(to, -defaultDays + 1);
+  if (from > to) from = to;
+  return { from, to };
+}
 
 const { ApiError } = actions;
 const routes = [];
@@ -153,11 +166,13 @@ get('/api/orders/:id', ({ db, today, params }) => {
     risk: plan.orderRisks.find((r) => r.orderId === o.id) ?? null,
     failures: db.prepare(`SELECT f.* FROM failure_reports f JOIN tractors t ON t.id = f.tractor_id
       WHERE t.customer_order_id = ? ORDER BY f.reported_date DESC`).all(o.id),
+    notifications: db.prepare("SELECT * FROM notifications WHERE entity = 'customer_order' AND entity_id = ? ORDER BY id DESC").all(o.id),
   };
 });
 
 post('/api/orders', ({ db, today, body }) => mutate(() => actions.createOrder(db, today, body)));
 post('/api/orders/:id/ship', ({ db, today, params }) => mutate(() => actions.shipOrder(db, today, params.id)));
+post('/api/orders/:id/rush', ({ db, today, params }) => mutate(() => actions.rushOrder(db, today, params.id)));
 post('/api/orders/:id/cancel', ({ db, today, params }) => mutate(() => actions.cancelOrder(db, today, params.id)));
 
 // ---- Tractors -----------------------------------------------------------------------
@@ -203,6 +218,7 @@ get('/api/tractors/:id', ({ db, params }) => {
       WHERE tp.tractor_id = ? ORDER BY pt.category, tp.part_number`).all(t.id),
     shipments: db.prepare(`SELECT sh.* FROM shipments sh JOIN shipment_tractors st ON st.shipment_id = sh.id WHERE st.tractor_id = ?`).all(t.id),
     failures: db.prepare('SELECT * FROM failure_reports WHERE tractor_id = ? ORDER BY reported_date DESC').all(t.id),
+    serviceJobs: db.prepare('SELECT * FROM service_jobs WHERE tractor_id = ? ORDER BY created_date DESC').all(t.id),
     openOrdersForModel: t.customer_order_id ? [] : db.prepare(`SELECT o.id, c.name AS customer_name, o.quantity, o.expected_delivery_date,
         (SELECT COUNT(*) FROM tractors x WHERE x.customer_order_id = o.id) AS assigned
       FROM customer_orders o JOIN customers c ON c.id = o.customer_id
@@ -310,11 +326,13 @@ get('/api/inventory-orders/:id', ({ db, today, params }) => {
     shipments: db.prepare('SELECT * FROM shipments WHERE inventory_order_id = ?').all(po.id),
     inventoryParts: db.prepare('SELECT * FROM inventory_parts WHERE inventory_order_id = ? ORDER BY id LIMIT 200').all(po.id),
     failures: db.prepare('SELECT * FROM failure_reports WHERE inventory_order_id = ? ORDER BY reported_date DESC').all(po.id),
+    notifications: db.prepare("SELECT * FROM notifications WHERE entity = 'inventory_order' AND entity_id = ? ORDER BY id DESC").all(po.id),
   };
 });
 
 post('/api/inventory-orders', ({ db, today, body }) => mutate(() => actions.placeInventoryOrder(db, today, body)));
 post('/api/inventory-orders/:id/ship', ({ db, today, params }) => mutate(() => actions.markInventoryOrderShipped(db, today, params.id)));
+post('/api/inventory-orders/:id/expedite', ({ db, today, params }) => mutate(() => actions.expediteInventoryOrder(db, today, params.id)));
 post('/api/inventory-orders/:id/receive', ({ db, today, params, body }) => mutate(() => actions.receiveInventoryOrder(db, today, params.id, body)));
 
 // ---- Shipping -----------------------------------------------------------------------
@@ -359,6 +377,14 @@ get('/api/failures', ({ db, query }) => {
       args.push(query.get(param));
     }
   }
+  if (query.get('from')) {
+    where.push('f.reported_date >= ?');
+    args.push(query.get('from'));
+  }
+  if (query.get('to')) {
+    where.push('f.reported_date <= ?');
+    args.push(query.get('to'));
+  }
   const status = query.get('status');
   if (status === 'unresolved') where.push("f.status != 'resolved'");
   else if (status) {
@@ -384,21 +410,41 @@ get('/api/failures/:id', ({ db, params }) => {
   if (!f) throw new ApiError(404, `Failure ${params.id} not found`);
   const sameLot = f.lot_number ? db.prepare(`SELECT f2.id, f2.reported_date, f2.stage, f2.description FROM failure_reports f2
     JOIN inventory_parts ip ON ip.id = f2.inventory_part_id WHERE ip.lot_number = ? AND f2.id != ?`).all(f.lot_number, f.id) : [];
-  return { ...f, sameLotFailures: sameLot };
+  return {
+    ...f,
+    sameLotFailures: sameLot,
+    serviceJobs: db.prepare('SELECT * FROM service_jobs WHERE failure_report_id = ? ORDER BY created_date DESC').all(f.id),
+    notifications: db.prepare("SELECT * FROM notifications WHERE entity = 'failure' AND entity_id = ? ORDER BY id DESC").all(f.id),
+    tractorStatus: f.tractor_id ? db.prepare('SELECT status FROM tractors WHERE id = ?').get(f.tractor_id).status : null,
+    activeJob: f.tractor_id ? db.prepare("SELECT id, status FROM service_jobs WHERE tractor_id = ? AND status != 'completed'").get(f.tractor_id) ?? null : null,
+  };
 });
 
-get('/api/quality', ({ db, today }) => {
-  const { performance } = runModels(db, today);
-  const byStage = db.prepare(`SELECT stage, status, SUM(quantity) AS n FROM failure_reports GROUP BY 1, 2`).all();
-  const byClass = db.prepare(`SELECT failure_class, stage, SUM(quantity) AS n FROM failure_reports GROUP BY 1, 2 ORDER BY 3 DESC`).all();
+get('/api/quality', ({ db, today, query }) => {
+  const { from, to } = rangeOf(query, today);
+  const r = [from, to];
+  const performance = partsPerformance(db, { from, to });
+  const byStage = db.prepare(`SELECT stage, status, SUM(quantity) AS n FROM failure_reports WHERE reported_date BETWEEN ? AND ? GROUP BY 1, 2`).all(...r);
+  const byClass = db.prepare(`SELECT failure_class, stage, SUM(quantity) AS n FROM failure_reports WHERE reported_date BETWEEN ? AND ? GROUP BY 1, 2 ORDER BY 3 DESC`).all(...r);
   const byMonth = db.prepare(`SELECT substr(reported_date, 1, 7) AS month, stage, SUM(quantity) AS n FROM failure_reports
-    WHERE reported_date >= date(?, '-12 months') GROUP BY 1, 2 ORDER BY 1`).all(today);
+    WHERE reported_date BETWEEN ? AND ? GROUP BY 1, 2 ORDER BY 1`).all(...r);
   const byPart = db.prepare(`SELECT f.part_number, pt.name, SUM(f.quantity) AS n,
       SUM(CASE WHEN f.stage = 'field' THEN f.quantity ELSE 0 END) AS field
-    FROM failure_reports f JOIN part_types pt ON pt.part_number = f.part_number GROUP BY 1 ORDER BY 3 DESC`).all();
+    FROM failure_reports f JOIN part_types pt ON pt.part_number = f.part_number WHERE f.reported_date BETWEEN ? AND ? GROUP BY 1 ORDER BY 3 DESC`).all(...r);
   const lateOrders = db.prepare(`SELECT COUNT(*) AS n FROM inventory_orders
     WHERE status IN ('submitted','confirmed','in_transit') AND expected_delivery_date < ?`).get(today).n;
-  return { performance, byStage, byClass, byMonth, byPart, lateOrders, totalFailures: sum(byStage, (r) => r.n) };
+  const trends = qualityTrends(db, { from, to, today });
+  return { from, to, performance, byStage, byClass, byMonth, byPart, lateOrders, totalFailures: sum(byStage, (x) => x.n), ...trends };
+});
+
+get('/api/quality/trends', ({ db, today, query }) => {
+  const { from, to } = rangeOf(query, today);
+  return qualityTrends(db, { from, to, today, supplierId: query.get('supplier') || null });
+});
+
+get('/api/costs', ({ db, today, query }) => {
+  const { from, to } = rangeOf(query, today);
+  return costReport(db, { from, to, today, plan: runModels(db, today).plan });
 });
 
 post('/api/failures', ({ db, today, body }) => mutate(() => actions.createFailure(db, today, body)));
@@ -458,7 +504,40 @@ get('/api/customers/:id', ({ db, params }) => {
   };
 });
 
+// ---- Notifications & service jobs ---------------------------------------------------
+
+get('/api/notifications', ({ db, query }) => db.prepare(`SELECT * FROM notifications ${query.get('status') ? 'WHERE status = ?' : ''}
+  ORDER BY id DESC LIMIT ?`).all(...(query.get('status') ? [query.get('status')] : []), limitOf(query, 200)));
+post('/api/notifications', ({ db, today, body }) => mutate(() => actions.sendNotification(db, today, body)));
+post('/api/notifications/:id/ack', ({ db, today, params }) => mutate(() => actions.acknowledgeNotification(db, today, params.id)));
+
+const JOB_SQL = `SELECT j.*, t.serial_number, t.model_number, c.name AS customer_name, f.description AS failure_description, f.severity,
+    (SELECT sh.expected_arrival_date FROM shipments sh WHERE sh.service_job_id = j.id AND sh.status = 'in_transit') AS leg_eta
+  FROM service_jobs j JOIN tractors t ON t.id = j.tractor_id JOIN customers c ON c.id = j.customer_id
+  LEFT JOIN failure_reports f ON f.id = j.failure_report_id`;
+get('/api/service-jobs', ({ db, query }) => {
+  const status = query.get('status');
+  const where = status === 'active' ? "WHERE j.status != 'completed'" : status ? 'WHERE j.status = ?' : '';
+  return db.prepare(`${JOB_SQL} ${where} ORDER BY j.created_date DESC, j.id DESC LIMIT ?`)
+    .all(...(status && status !== 'active' ? [status] : []), limitOf(query, 200));
+});
+get('/api/service-jobs/:id', ({ db, params }) => {
+  const j = db.prepare(`${JOB_SQL} WHERE j.id = ?`).get(params.id);
+  if (!j) throw new ApiError(404, `Service job ${params.id} not found`);
+  return {
+    ...j,
+    shipments: db.prepare('SELECT * FROM shipments WHERE service_job_id = ? ORDER BY shipped_date').all(j.id),
+    partOnHand: j.part_number ? db.prepare('SELECT available FROM v_part_balances WHERE part_number = ?').get(j.part_number).available : null,
+  };
+});
+post('/api/service-jobs', ({ db, today, body }) => mutate(() => actions.scheduleServiceJob(db, today, body)));
+post('/api/service-jobs/:id/pickup', ({ db, today, params }) => mutate(() => actions.servicePickup(db, today, params.id)));
+post('/api/service-jobs/:id/arrive', ({ db, today, params }) => mutate(() => actions.serviceArrive(db, today, params.id)));
+post('/api/service-jobs/:id/repair', ({ db, today, params }) => mutate(() => actions.serviceRepair(db, today, params.id)));
+post('/api/service-jobs/:id/return', ({ db, today, params }) => mutate(() => actions.serviceReturn(db, today, params.id)));
+
 get('/api/catalog', ({ db }) => ({
+  sites: db.prepare('SELECT id, name, city, state, is_plant FROM warehouses ORDER BY is_plant DESC, id').all(),
   models: db.prepare('SELECT * FROM tractor_models ORDER BY model_number').all(),
   bom: db.prepare('SELECT * FROM bom_items ORDER BY model_number, part_number').all(),
   parts: db.prepare('SELECT * FROM part_types ORDER BY part_number').all(),

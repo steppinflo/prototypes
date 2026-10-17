@@ -29,7 +29,8 @@ Then open **http://localhost:4300**. On first start the database is built from
 | `RKB_TODAY` | machine date | Pin "today" (e.g. `2026-10-16`) for repeatable demos |
 | `RKB_DB_PATH` | `data/rkb-obsidian.db` | SQLite file location |
 
-Other commands: `npm test` (unit tests in `test/`), `npm run seed` (rebuild the data).
+Other commands: `npm test` (unit tests and end-to-end user-journey tests in `test/`),
+`npm run seed` (rebuild the data).
 The sidebar's **Reset demo data** does the same from the browser.
 
 ## What's in the portal
@@ -38,13 +39,32 @@ The sidebar's **Reset demo data** does the same from the browser.
 |---|---|
 | **Dashboard** | Landing page laid out like the sketch: inventory of parts, *What do you need to do today* (due date, what it blocks, customers impacted, one-click action), current tractors, current orders, demand for the next 90 days |
 | **Supply & demand plan** | Forecast, how many tractors to build and by when, which parts to buy (qty, supplier, order-by date), orders at risk, planning assumptions you can change |
-| **Failures & issues** | Receiving, manufacturing and field failures; parts performance by part × supplier |
-| **Shipping** | Parts orders in transit from suppliers, tractors in transit to customers |
+| **Cost & efficiency** | For any date range: parts bought vs. what actual demand needed (over/under spend), consumption, inventory value and carrying cost, rush premiums, freight, repair costs, late deliveries, forecast vs. actual |
+| **Failures & issues** | Receiving, manufacturing and field failures for any date range; supplier trends (failure rate, on-time, days late), recurring failure patterns, lot clusters, repeat late deliveries, parts performance scores |
+| **Service & repairs** | Damaged tractors collected from customer sites, repaired at the plant (replacement part traced), and returned |
+| **Notifications** | Messages sent to the plant/yards, suppliers and customers from tasks and records |
+| **Shipping** | Parts orders in transit from suppliers, tractors in transit to customers, service hauls |
 | **Customer orders · Tractors · Parts inventory · Parts orders · Suppliers · Customers** | Day-to-day inventory and fulfilment management, with full tractor ↔ part traceability (serial and lot) |
 
 Actions in the portal (place/receive POs, start and complete builds, clear QC holds,
 earmark stock, ship and deliver, log and resolve failures, create orders) write to the
 database and the models re-run immediately.
+
+### Escalations
+
+Critical tasks carry the steps to resolve them:
+
+- **Rush a parts order** (+15%, half the quoted lead time, far less slip) — offered when a
+  normal order would land after the parts are needed; **expedite** an existing late order.
+- **Rush a customer order** — its builds move to the front of the queue and it ships with
+  expedited freight.
+- **Notify** the plant or a yard, a supplier or a customer (logged against the order, PO, failure or part).
+- **Arrange pickup & repair** for a tractor down at a customer site: pickup → plant →
+  repair (failed unit swapped from stock, traceability kept) → return, with haul, labour
+  and parts costs recorded. If the part isn't in stock, the task offers a rush order for it.
+
+Cost assumptions (placeholders, in `src/lib/costs.mjs`): 15% rush premium, $3.25/mile
+freight, $95/hour repair labour, 20%/year inventory carrying cost.
 
 ## The mocked models
 
@@ -80,6 +100,8 @@ ends around today:
 - A day-by-day simulation runs purchasing, receiving, building, QC, shipping, delivery
   and field failures, so every tractor traces to the parts, lots, POs and suppliers it
   was built from.
+- Planners' history includes rush parts orders, outbound freight costs and completed
+  pickup-and-repair jobs for serious field failures (one is mid-repair today).
 - Two demo scenarios are added: a 6 × TX-500 dealer fleet order that outruns engine
   supply, and a tractor on QC hold waiting for a control unit.
 
@@ -93,6 +115,7 @@ src/
   db/                 schema.sql (tables from the doc/diagram) and SQLite helpers
   seed/               catalog, CSV replay simulation, scenario injection
   models/             forecast, parts performance, inventory plan, tasks
+  analytics/          cost & efficiency report, supplier quality trends
   api/                routes (reads) and actions (writes)
 public/               web app: vanilla JS, no build step
 test/                 node --test suites

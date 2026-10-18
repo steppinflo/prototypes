@@ -60,6 +60,7 @@ CREATE TABLE tractor_models (
 CREATE TABLE part_types (
   part_number    TEXT PRIMARY KEY,      -- ENG-75
   name           TEXT NOT NULL,
+  description    TEXT NOT NULL,         -- what the part does in the tractor
   category       TEXT NOT NULL,         -- engine, door, door handle, lift, fasteners, ...
   serialized     INTEGER NOT NULL,      -- 1 = tracked per unit by serial, 0 = tracked per lot
   unit_cost      REAL NOT NULL,

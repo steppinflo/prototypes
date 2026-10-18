@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = resolve(here, '..', '..');
 // Bump when schema.sql changes; the server rebuilds older databases on start.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const DEFAULT_DB_PATH = process.env.RKB_DB_PATH || resolve(PROJECT_ROOT, 'data', 'rkb-obsidian.db');
 
 export function openDb(path = DEFAULT_DB_PATH) {

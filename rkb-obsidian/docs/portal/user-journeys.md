@@ -51,6 +51,10 @@ user can take any action.
 `T-…` or a `RKB-…` tractor serial, `IP-…` or a part serial number, a part number such as
 `ENG-75`. Anything else searches tractors.
 
+**Part previews.** Hovering any link to a part (tables, task chips, the dashboard's
+parts list, recommendations, failures) shows a preview: a small tractor drawing with
+that part highlighted, its name, what it does in the tractor, and the models that use it.
+
 **Conventions used on every page**
 
 - Buttons act immediately and confirm with a toast. Cancelling an order, and rushing or
@@ -370,6 +374,16 @@ failure), the failure's page, or the tractor's page.
 
 ### J13 · Trace a part or tractor
 
+- Tractor → **Tractor at a glance**: a drawing of that tractor (cab or open station,
+  dual rear tyres on the TX-500) with every part in its bill of materials as its own
+  region. Colour it by **This tractor's health** (no issues / failed before or replaced /
+  open failure), **Supplier** of the installed unit, or plain **Parts**. Hover a part
+  to see it; click it (or its chip below the drawing) to keep it selected. The panel
+  shows what the part does, the exact unit or lot installed with supplier, PO and
+  install date (and anything replaced in a repair), and failures on this tractor. The
+  page opens with the part that has an open failure already selected.
+- Part → **Where it goes**: the part highlighted on each model that uses it (switch
+  models with the tabs), with its description and quantity per tractor.
 - Tractor → **Parts installed (traceability)**: every part with serial or lot,
   supplier, parts order, received and installed dates (and replaced date).
 - Unit or lot (`IP-…` or serial) → the tractors it went into, its PO and supplier, its
@@ -401,11 +415,11 @@ expectation and freight cost (**Mark delivered**), and service hauls to and from
 | Supply & demand plan | Assumptions, forecast, build plan, demand, purchase recommendations, orders at risk, stock netting, parts requirements | Re-run plan, Place PO, Rush, Start now, Earmark |
 | Cost & efficiency | Date-ranged spend, demand need, inventory, carrying cost, rush, freight, repairs, late deliveries, forecast vs. actual, by part, by supplier | Date range |
 | Customer orders / order | Filterable list; order timeline, risk, plan for remaining tractors, tractors, shipments, issues, notifications | New order, Start builds, Ship, Rush, Notify plant, Update customer, Cancel, Earmark |
-| Tractors / tractor | Filterable list; tractor details, failures, shipping, parts traceability, service history | Pass QC, Install replacement & release, Earmark to order, Arrange pickup & repair, Log failure |
+| Tractors / tractor | Filterable list; tractor details, failures, shipping, interactive parts diagram coloured by health or supplier, parts traceability, service history | Pass QC, Install replacement & release, Earmark to order, Arrange pickup & repair, Log failure |
 | Shipping | Inbound, outbound and service shipments | Receive, Mark delivered, Arrived at plant, Returned |
 | Service & repairs / job | Active and completed jobs with cost; job timeline, cost breakdown, hauls | Picked up, Arrived at plant, Repair done, Returned, Update customer |
 | Notifications | Every message with recipient, urgency, subject and related record | New notification, Mark acknowledged |
-| Parts inventory / part | Balances, 90-day need, status, supplier scores; projected stock chart, recommendations, suppliers compared, open orders with predicted arrival, stock lots/units, installs, failures | New parts order, Order this part, Place PO, Rush |
+| Parts inventory / part | Balances, 90-day need, status, supplier scores; where the part sits on each model and what it does; projected stock chart, recommendations, suppliers compared, open orders with predicted arrival, stock lots/units, installs, failures | New parts order, Order this part, Place PO, Rush |
 | Inventory part | Unit or lot details, where installed, failures | Log issue |
 | Parts orders / PO | Filterable list with predicted arrival and rush flag; PO detail, shipping, receiving issues, received units, notifications | New parts order, Expedite, Mark shipped, Receive, Notify supplier |
 | Suppliers / supplier | Reliability cards; supplier detail with trends, recurring issues, per-part performance, orders, failures | Notify supplier, Raise with supplier |
@@ -553,3 +567,4 @@ uses (`test/flows.test.mjs`):
 | J11 trends, recurring failures, late deliveries, range filtering, raise with supplier | flow 4 |
 | J8, J7, J12 building, QC hold, earmarking, shipping, delivery, receiving, failures | `test/actions.test.mjs` |
 | Seed integrity, planner and task rules | `test/seed.test.mjs`, `test/models.test.mjs` |
+| J13 parts diagram covers every part of every model; previews and colouring | `test/diagram.test.mjs` |

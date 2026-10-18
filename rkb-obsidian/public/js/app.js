@@ -16,6 +16,7 @@ import { costsView } from './views/costs.js';
 import { serviceView, serviceJobView } from './views/service.js';
 import { notificationsView } from './views/notifications.js';
 import './views/escalations.js';
+import { setCatalog, partPreviewHtml, initDiagram } from './tractorDiagram.js';
 
 const ROUTES = [
   [/^\/?$/, 'dashboard', dashboardView],
@@ -54,12 +55,13 @@ export async function render({ keepScroll = false } = {}) {
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === route[1]));
   document.getElementById('sidebar').classList.remove('open');
   const scroll = window.scrollY;
-  if (!metaLoaded) await refreshMeta();
+  if (!metaLoaded) await Promise.all([refreshMeta(), api('/catalog').then(setCatalog).catch(() => {})]);
   if (!keepScroll) view.innerHTML = '<div class="loading">Loading…</div>';
   try {
     const out = await route[2](...params);
     if (seq !== renderSeq) return;
     view.innerHTML = String(out);
+    view.querySelectorAll('[data-td]').forEach(initDiagram);
     window.scrollTo(0, keepScroll ? scroll : 0);
   } catch (err) {
     if (seq !== renderSeq) return;
@@ -176,12 +178,23 @@ document.addEventListener('submit', async (e) => {
 });
 
 // Tooltips for anything with data-tip (chart hit areas, bars).
+// Any link to a part shows a preview: where the part sits on a tractor and what it does.
 const tip = document.getElementById('tooltip');
 document.addEventListener('mouseover', (e) => {
   const el = e.target.closest('[data-tip]');
-  if (!el) return tip.classList.remove('on');
-  tip.innerHTML = el.dataset.tip;
-  tip.classList.add('on');
+  if (el) {
+    tip.innerHTML = el.dataset.tip;
+    tip.classList.remove('preview');
+    return tip.classList.add('on');
+  }
+  const link = e.target.closest('a[href^="#/parts/"]');
+  const preview = link && partPreviewHtml(decodeURIComponent(link.getAttribute('href').slice(8).split('?')[0]));
+  if (preview) {
+    tip.innerHTML = preview;
+    tip.classList.add('on', 'preview');
+    return;
+  }
+  tip.classList.remove('on', 'preview');
 });
 document.addEventListener('mousemove', (e) => {
   if (!tip.classList.contains('on')) return;

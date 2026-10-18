@@ -1,9 +1,10 @@
 // Tractors: every tractor built, its status, and full part traceability.
 
 import {
-  api, html, fmtDate, seg, qs, table, statusBadge, pageHead, orderLink, customerLink, tractorLink, partLink,
+  api, html, raw, fmtDate, seg, qs, table, statusBadge, pageHead, orderLink, customerLink, tractorLink, partLink,
   poLink, supplierLink, modelSwatch, actionBtn, DIALOGS, openDialog, toast, severityBadge,
 } from '../lib.js';
+import { tractorSvg, layoutFor, registerDiagram, getCatalog, setCatalog, partInfo } from '../tractorDiagram.js';
 
 const STATUSES = [['current', 'Current'], ['in_production', 'Building'], ['qc_hold', 'QC hold'], ['inventoried', 'In stock'],
   ['earmarked', 'Earmarked'], ['shipping', 'Shipping'], ['delivered', 'Delivered'], ['in_repair', 'In repair'], ['all', 'All']];
@@ -37,6 +38,7 @@ export async function tractorsView() {
 
 export async function tractorView(id) {
   const t = await api(`/tractors/${encodeURIComponent(id)}`);
+  if (!getCatalog()) setCatalog(await api('/catalog'));
   const actions = [];
   if (t.status === 'in_production') actions.push(actionBtn({ label: 'Pass QC & complete', url: `/tractors/${t.id}/complete`, body: {} }, 'btn primary'));
   if (t.status === 'qc_hold') actions.push(actionBtn({ label: `Install replacement ${t.hold_part_number} & release`, url: `/tractors/${t.id}/clear-hold`, body: {} }, 'btn primary'));
@@ -81,6 +83,7 @@ export async function tractorView(id) {
         ], t.shipments)}` : ''}
       </section>
     </div>
+    ${diagramCard(t)}
     <section class="card"><div class="card-head"><h2>Parts installed (traceability)</h2><span class="muted small">${t.parts.length} part records · serialized units and lot-tracked parts</span></div>
       ${table([
         { label: 'Part', key: 'part_number', render: (p) => html`${partLink(p.part_number)} <span class="muted">${p.part_name}</span>` },
@@ -114,3 +117,66 @@ DIALOGS.earmark = (data, done) => {
   });
 };
 
+
+// ---- Tractor at a glance: parts diagram coloured by this tractor's history -----------
+
+const SUPPLIER_COLOR = { 'SUP-A': 's1', 'SUP-B': 's2', 'SUP-C': 's3', 'SUP-D': 's4', 'SUP-E': 's5' };
+const HEALTH_LABEL = { good: 'No issues', warn: 'Failed before / replaced', bad: 'Open failure' };
+const DOT = { good: 'var(--good)', warn: 'var(--warning)', bad: 'var(--critical)', s1: 'var(--s1)', s2: 'var(--s2)', s3: 'var(--s3)', s4: 'var(--s4)', s5: 'var(--s5)' };
+
+function diagramCard(t) {
+  const mode = qs().get('view') ?? 'health';
+  const L = layoutFor(t.model_number);
+  const pns = L.lines.map((b) => b.part_number);
+  const current = t.parts.filter((p) => !p.removed_date);
+  const health = (pn) => {
+    const fs = t.failures.filter((f) => f.part_number === pn);
+    if (fs.some((f) => f.status !== 'resolved')) return 'bad';
+    if (fs.length || t.parts.some((p) => p.part_number === pn && p.removed_date)) return 'warn';
+    return 'good';
+  };
+  const supplierOf = (pn) => current.find((p) => p.part_number === pn)?.supplier_id;
+  const color = mode === 'health' ? health : mode === 'supplier' ? (pn) => SUPPLIER_COLOR[supplierOf(pn)] ?? null : () => null;
+  const pinned = pns.find((pn) => health(pn) === 'bad') ?? pns.find((pn) => health(pn) === 'warn') ?? L.partFor('engine');
+  const id = `td-${t.id}`;
+  registerDiagram(id, (pn) => partPanel(t, pn, health(pn)), pinned);
+
+  const suppliers = getCatalog().suppliers;
+  const legendItems = mode === 'health' ? Object.entries(HEALTH_LABEL).map(([k, l]) => [DOT[k], l])
+    : mode === 'supplier' ? suppliers.filter((x) => pns.some((pn) => supplierOf(pn) === x.id)).map((x) => [DOT[SUPPLIER_COLOR[x.id]], `${x.code} · ${x.name}`]) : [];
+  return html`<section class="card" style="margin-bottom:16px">
+    <div class="card-head"><h2>Tractor at a glance</h2>
+      <span class="muted small">Hover a part to see it, click to keep it selected</span>
+      <div class="right">${seg('view', [['health', 'This tractor’s health'], ['supplier', 'Supplier'], ['plain', 'Parts']], mode)}</div></div>
+    ${legendItems.length ? html`<div class="legend">${legendItems.map(([c, l]) => html`<span><span class="swatch" style="background:${c}"></span>${l}</span>`)}</div>` : ''}
+    <div data-td="${id}">
+      <div class="tractor-view">
+        <div>${raw(tractorSvg({ model: t.model_number, color, title: `${t.serial_number} parts` }))}</div>
+        <div class="td-panel"></div>
+      </div>
+      <div class="td-picks">${pns.map((pn) => html`<button data-pick="${pn}"><span class="dot" style="background:${DOT[color(pn)] ?? 'var(--accent)'}"></span>${partInfo(pn)?.name ?? pn}</button>`)}</div>
+    </div></section>`;
+}
+
+function partPanel(t, pn, state) {
+  const info = partInfo(pn) ?? { name: pn, description: '' };
+  const qty = layoutFor(t.model_number).lines.find((b) => b.part_number === pn)?.quantity ?? 0;
+  const units = t.parts.filter((p) => p.part_number === pn);
+  const failures = t.failures.filter((f) => f.part_number === pn);
+  return String(html`
+    <div class="muted small">${info.category ?? ''} · ×${qty} per ${t.model_number}</div>
+    <h3>${info.name}</h3>
+    <p class="desc">${info.description}</p>
+    <div style="margin-bottom:10px"><span class="badge ${state === 'bad' ? 'critical' : state === 'warn' ? 'warning' : 'good'}">${HEALTH_LABEL[state]}</span> ${partLink(pn)}</div>
+    <div class="muted small" style="margin-bottom:4px">Installed in this tractor</div>
+    ${units.length ? units.map((u) => html`<div style="padding:5px 0;border-top:1px solid var(--border)">
+        <a class="mono" href="#/inventory-parts/${u.inventory_part_id}">${u.serial_number ?? `lot ${u.lot_number}`}</a>${u.quantity > 1 ? ` ×${u.quantity}` : ''}
+        ${u.removed_date ? html` <span class="badge plain">replaced ${fmtDate(u.removed_date)}</span>` : ''}
+        <div class="small ink2">${supplierLink(u.supplier_id, u.supplier_name)} · ${poLink(u.inventory_order_id)} · installed ${fmtDate(u.installed_date)}</div></div>`)
+      : html`<div class="muted small">Not installed yet</div>`}
+    <div class="muted small" style="margin:10px 0 4px">Failures on this tractor</div>
+    ${failures.length ? failures.map((f) => html`<div style="padding:5px 0;border-top:1px solid var(--border)">
+        <a class="mono" href="#/quality/${f.id}">${f.id}</a> ${severityBadge(f.severity)} ${statusBadge(f.status)}
+        <div class="small ink2">${fmtDate(f.reported_date)} · ${f.stage} · ${f.description}</div></div>`)
+      : html`<div class="muted small">None recorded</div>`}`);
+}

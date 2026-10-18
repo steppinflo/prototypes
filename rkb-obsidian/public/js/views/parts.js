@@ -1,9 +1,10 @@
 // Parts inventory: balances, projections, suppliers, lots, and per-unit traceability.
 
 import {
-  api, html, fmtNum, fmtMoney, fmtPct, fmtDate, fmtWeek, table, statusBadge, pageHead, partLink, poLink,
-  supplierLink, tractorLink, DIALOGS, openDialog, toast, kpi, severityBadge,
+  api, html, raw, fmtNum, fmtMoney, fmtPct, fmtDate, fmtWeek, table, statusBadge, pageHead, partLink, poLink,
+  supplierLink, tractorLink, DIALOGS, openDialog, toast, kpi, severityBadge, seg, qs, modelSwatch,
 } from '../lib.js';
+import { tractorSvg, getCatalog, setCatalog } from '../tractorDiagram.js';
 import { lineChart, legend, tipRows } from '../charts.js';
 import { recommendationsTable } from './planning.js';
 
@@ -32,6 +33,9 @@ export async function partsView() {
 
 export async function partView(pn) {
   const p = await api(`/parts/${encodeURIComponent(pn)}`);
+  if (!getCatalog()) setCatalog(await api('/catalog'));
+  const models = p.usedIn.map((u) => u.model_number);
+  const shownModel = models.includes(qs().get('model')) ? qs().get('model') : models[0];
   const proj = p.projection ?? [];
   const chart = lineChart({
     labels: proj.map((x) => x.weekStart),
@@ -57,6 +61,15 @@ export async function partView(pn) {
       ${kpi('Expected loss rate', fmtPct(p.plan.expectedLossRate, 1), 'QC scrap + receiving rejects')}
       ${kpi('Plan status', statusBadge(p.plan.status), p.plan.firstShortageDate ? `short from ${fmtDate(p.plan.firstShortageDate)} without new orders` : 'no shortfall projected', p.plan.status === 'critical')}
     </div>
+    <section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Where it goes</h2>
+        ${models.length > 1 ? html`<div class="right">${seg('model', models.map((m) => [m, m]), shownModel)}</div>` : ''}</div>
+      <div class="tractor-view">
+        <div>${raw(tractorSvg({ model: shownModel, focus: p.part_number, muted: true, title: `${p.name} on a ${shownModel}` }))}</div>
+        <div class="td-panel"><h3>${p.name}</h3><p class="desc">${p.description}</p>
+          <div class="muted small" style="margin-bottom:4px">Used in</div>
+          ${p.usedIn.map((u) => html`<div style="padding:4px 0;border-top:1px solid var(--border)">${modelSwatch(u.model_number)}${u.model_number} ${u.name} <span class="muted">× ${u.quantity} per tractor</span></div>`)}
+        </div>
+      </div></section>
     <section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Projected on-hand, next ${proj.length} weeks</h2></div>
       ${legend([{ name: 'Existing stock + open POs', color: 'var(--s2)', line: true }, { name: 'With recommended POs', color: 'var(--s1)', line: true }, { name: 'Safety stock', color: 'var(--ink-2)', line: true }])}
       <div class="card-body">${chart}</div></section>

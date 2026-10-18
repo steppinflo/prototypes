@@ -49,6 +49,7 @@ The sidebar's **Reset demo data** does the same from the browser.
 | **Notifications** | Messages sent to the plant/yards, suppliers and customers from tasks and records |
 | **Shipping** | Parts orders in transit from suppliers, tractors in transit to customers, service hauls |
 | **Customer orders · Tractors · Parts inventory · Parts orders · Suppliers · Customers** | Day-to-day inventory and fulfilment management, with full tractor ↔ part traceability (serial and lot) |
+| **Tractor parts diagram** | On each tractor: an interactive drawing of the tractor with every part highlighted and coloured by that tractor's health or supplier; on each part: where it sits; on any part link: a hover preview of the part and what it does |
 
 Actions in the portal (place/receive POs, start and complete builds, clear QC holds,
 earmark stock, ship and deliver, log and resolve failures, create orders) write to the
@@ -121,7 +122,7 @@ src/
   models/             forecast, parts performance, inventory plan, tasks
   analytics/          cost & efficiency report, supplier quality trends
   api/                routes (reads) and actions (writes)
-public/               web app: vanilla JS, no build step
+public/               web app: vanilla JS, no build step (js/tractorDiagram.js = parts diagram)
 test/                 node --test suites
 docs/                 business docs, solutions doc, diagram, source dataset
 ```

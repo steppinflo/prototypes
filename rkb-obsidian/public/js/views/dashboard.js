@@ -4,7 +4,7 @@
 
 import {
   api, html, fmtNum, fmtMoney, fmtPct, fmtWeek, fmtDate, relDue, kpi, seg, qs, actionBtn,
-  severityBadge, statusBadge, modelSwatch, today, addDays, daysBetween,
+  severityBadge, statusBadge, modelSwatch, today, addDays, daysBetween, helpLabel,
 } from '../lib.js';
 import { barChart, legend, tipRows } from '../charts.js';
 
@@ -106,12 +106,21 @@ function partsPanel(parts) {
 }
 
 const TRACTOR_COLS = [['in_production', 'Building'], ['qc_hold', 'QC hold'], ['inventoried', 'In stock'], ['earmarked', 'Earmarked'], ['shipping', 'Shipping']];
+const TRACTOR_HELP = {
+  Model: 'Tractor model.',
+  Building: 'On the line today: one working day per tractor once all its parts are on hand.',
+  'QC hold': 'Failed end-of-line test and waiting for a replacement part.',
+  'In stock': 'Finished and not assigned to any customer order — available to earmark.',
+  Earmarked: 'Finished and reserved for a customer order, waiting to ship.',
+  Shipping: 'On a truck to the customer.',
+};
+const colHelp = (l) => `<b>${l}</b><div style="margin-top:3px">${TRACTOR_HELP[l]}</div>`;
 
 function tractorsPanel(rows) {
   const total = (k) => rows.reduce((s, r) => s + r[k], 0);
   return html`<div class="card-head"><h2>Current inventory of tractors</h2><div class="right"><a class="small" href="#/tractors">All →</a></div></div>
     <div class="card-body flush"><table>
-      <thead><tr><th>Model</th>${TRACTOR_COLS.map(([k, l]) => html`<th class="num"><a href="#/tractors?status=${k}">${l}</a></th>`)}</tr></thead>
+      <thead><tr><th>${helpLabel('Model', colHelp('Model'))}</th>${TRACTOR_COLS.map(([k, l]) => html`<th class="num"><a href="#/tractors?status=${k}">${helpLabel(l, colHelp(l))}</a></th>`)}</tr></thead>
       <tbody>${rows.map((r) => html`<tr><td class="nowrap">${modelSwatch(r.model)}<a href="#/tractors?model=${r.model}&status=current">${r.model}</a></td>
         ${TRACTOR_COLS.map(([k]) => html`<td class="num">${r[k] ? r[k] : html`<span class="muted">·</span>`}</td>`)}</tr>`)}
         <tr><td><b>Total</b></td>${TRACTOR_COLS.map(([k]) => html`<td class="num"><b>${total(k)}</b></td>`)}</tr></tbody></table></div>

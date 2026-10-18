@@ -31,7 +31,7 @@ export async function tractorsView() {
         { label: 'Built', key: 'build_start_date', render: (t) => fmtDate(t.build_start_date) },
         { label: 'Shipped', key: 'ship_date', render: (t) => fmtDate(t.ship_date) },
         { label: 'Delivered', key: 'delivered_date', render: (t) => fmtDate(t.delivered_date) },
-      ], data.rows, { empty: 'No tractors match' })}
+      ], data.rows, { ctx: 'tractor', empty: 'No tractors match' })}
       <div class="card-note">${data.rows.length} of ${data.total} tractors</div>
     </section>`;
 }
@@ -73,14 +73,14 @@ export async function tractorView(id) {
           { label: 'Part', key: 'part_number', render: (f) => partLink(f.part_number) },
           { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], t.failures, { empty: 'No failures recorded' })}
+        ], t.failures, { ctx: 'failure', empty: 'No failures recorded' })}
         ${t.shipments.length ? html`<div class="card-head"><h2>Shipping</h2></div>${table([
           { label: 'Shipment', key: 'id', render: (s) => html`<span class="mono">${s.id}</span>` },
           { label: 'Carrier', key: 'carrier' },
           { label: 'Shipped', key: 'shipped_date', render: (s) => fmtDate(s.shipped_date) },
           { label: 'ETA / arrived', key: 'expected_arrival_date', render: (s) => fmtDate(s.actual_arrival_date ?? s.expected_arrival_date) },
           { label: 'Status', key: 'status', render: (s) => statusBadge(s.status) },
-        ], t.shipments)}` : ''}
+        ], t.shipments, { ctx: 'shipment' })}` : ''}
       </section>
     </div>
     ${diagramCard(t)}
@@ -94,7 +94,7 @@ export async function tractorView(id) {
         { label: 'Parts order', key: 'inventory_order_id', render: (p) => poLink(p.inventory_order_id) },
         { label: 'Received', key: 'received_date', render: (p) => fmtDate(p.received_date) },
         { label: 'Installed', key: 'installed_date', render: (p) => html`${fmtDate(p.installed_date)}${p.removed_date ? html`<div class="small due over">replaced ${fmtDate(p.removed_date)}</div>` : ''}` },
-      ], t.parts, { empty: 'No parts installed' })}</section>
+      ], t.parts, { ctx: 'install', empty: 'No parts installed' })}</section>
     ${t.serviceJobs.length ? html`<section class="card" style="margin-top:16px"><div class="card-head"><h2>Service history</h2></div>${table([
       { label: 'Job', key: 'id', render: (j) => html`<a class="mono" href="#/service/${j.id}">${j.id}</a>` },
       { label: 'Failure', key: 'failure_report_id', render: (j) => (j.failure_report_id ? html`<a class="mono" href="#/quality/${j.failure_report_id}">${j.failure_report_id}</a>` : '—') },
@@ -102,7 +102,7 @@ export async function tractorView(id) {
       { label: 'Picked up', key: 'picked_up_date', render: (j) => fmtDate(j.picked_up_date ?? j.scheduled_pickup_date) },
       { label: 'Returned', key: 'returned_date', render: (j) => fmtDate(j.returned_date) },
       { label: 'Status', key: 'status' },
-    ], t.serviceJobs)}</section>` : ''}`;
+    ], t.serviceJobs, { ctx: 'job' })}</section>` : ''}`;
 }
 
 DIALOGS.earmark = (data, done) => {

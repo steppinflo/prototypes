@@ -71,7 +71,7 @@ export async function costsView() {
           { k: 'Repair labour & parts', v: s.repairCost, n: 'field failures repaired at the plant' },
           { k: 'Scrapped on the line', v: s.scrapValue, n: 'parts failing build / QC' },
           { k: 'Rejected at receiving', v: s.rejectedValue, n: 'returned to suppliers for credit' },
-        ])}
+        ], { ctx: 'costLine' })}
         <div class="card-note">Parts cost per tractor built: ${fmtMoney(s.partsCostPerTractor)} · ${fmtNum(s.tractorsBuilt)} built, ${fmtNum(s.tractorsDelivered)} delivered (${fmtMoney(s.revenueDelivered)} revenue).</div></section>
       <section class="card"><div class="card-head"><h2>Forecast vs. actual tractors ordered</h2></div>
         ${fva.length ? html`${legend([{ name: 'Actual', color: 'var(--s1)', line: true }, { name: 'Forecast (one month ahead)', color: 'var(--s2)', line: true }])}
@@ -94,7 +94,7 @@ export async function costsView() {
           { label: 'Spend', key: 'boughtValue', num: true, render: (p) => fmtMoney(p.boughtValue) },
           { label: 'Rush', key: 'rushPremium', num: true, render: (p) => fmtMoney(p.rushPremium) },
           { label: 'Excess now', key: 'excessValue', num: true, render: (p) => (p.excessValue ? fmtMoney(p.excessValue) : '—') },
-        ], c.parts, { scroll: true })}
+        ], c.parts, { ctx: 'costPart', scroll: true })}
         <div class="card-note">Excess now = stock on hand today beyond the next 90 days' requirement plus safety stock.</div></section>
       <section class="card"><div class="card-head"><h2>By supplier</h2></div>
         ${table([
@@ -104,6 +104,6 @@ export async function costsView() {
           { label: 'Share', key: 'share', num: true, sort: (x) => x.spend, render: (x) => fmtPct(s.partsPurchased ? x.spend / s.partsPurchased : 0) },
           { label: 'Rush orders', key: 'rush_count', num: true },
           { label: 'Rush premium', key: 'rush_premium', num: true, render: (x) => fmtMoney(x.rush_premium) },
-        ], c.suppliers)}</section>
+        ], c.suppliers, { ctx: 'costSupplier' })}</section>
     </div>`;
 }

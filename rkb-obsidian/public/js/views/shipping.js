@@ -46,7 +46,7 @@ export async function shippingView() {
         { label: 'Quoted', key: 'po_expected', render: (s) => html`${fmtDate(s.po_expected)}${s.late ? html` <span class="badge critical">Late</span>` : ''}` },
         { label: 'Progress', key: 'p', nosort: true, render: progress },
         { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: 'Receive', url: `/inventory-orders/${s.inventory_order_id}/receive`, body: {} }) : statusBadge(s.status)) },
-      ], inbound, { empty: 'No inbound shipments' })}</section>
+      ], inbound, { ctx: 'inbound', empty: 'No inbound shipments' })}</section>
     <section class="card"><div class="card-head"><h2>Outbound — tractors to customers</h2></div>
       ${table([
         { label: 'Shipment', key: 'id', render: (s) => html`<span class="mono">${s.id}</span>` },
@@ -60,7 +60,7 @@ export async function shippingView() {
         { label: 'Freight', key: 'freight_cost', num: true, render: (s) => html`${fmtMoney(s.freight_cost)}${s.rush ? html` <span class="badge high">Rush</span>` : ''}` },
         { label: 'Progress', key: 'p', nosort: true, render: progress },
         { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: 'Mark delivered', url: `/shipments/${s.id}/deliver`, body: {} }) : statusBadge(s.status)) },
-      ], outbound, { empty: 'No tractors in transit' })}</section>
+      ], outbound, { ctx: 'outbound', empty: 'No tractors in transit' })}</section>
     <section class="card" style="margin-top:16px"><div class="card-head"><h2>Service hauls — tractors to and from repair</h2></div>
       ${table([
         { label: 'Shipment', key: 'id', render: (s) => html`<span class="mono">${s.id}</span>` },
@@ -72,5 +72,5 @@ export async function shippingView() {
         { label: 'ETA', key: 'expected_arrival_date', render: etaCell },
         { label: 'Cost', key: 'freight_cost', num: true, render: (s) => html`${fmtMoney(s.freight_cost)}${s.rush ? html` <span class="badge high">Rush</span>` : ''}` },
         { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: s.direction === 'service_pickup' ? 'Arrived at plant' : 'Returned', url: `/shipments/${s.id}/deliver`, body: {} }) : statusBadge(s.status)) },
-      ], service, { empty: 'No service hauls' })}</section>`;
+      ], service, { ctx: 'haul', empty: 'No service hauls' })}</section>`;
 }

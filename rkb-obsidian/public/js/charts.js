@@ -148,8 +148,8 @@ export function hBars(items, { fmt = (v) => fmtNum(v), max = null } = {}) {
 }
 
 export function legend(items) {
-  return raw(`<div class="legend">${items.map((it) => (it.line
+  return raw(`<div class="legend">${items.map((it) => (it.tip ? `<span class="help-label" data-tip="${esc(it.tip)}">` : '') + (it.line
     ? `<span><span class="line-key" style="border-color:${it.color}"></span>${esc(it.name)}</span>`
     : it.band ? `<span><span class="band-key" style="background:${it.color}"></span>${esc(it.name)}</span>`
-      : `<span><span class="swatch" style="background:${it.color}"></span>${esc(it.name)}</span>`)).join('')}</div>`);
+      : `<span><span class="swatch" style="background:${it.color}"></span>${esc(it.name)}</span>`) + (it.tip ? '</span>' : '')).join('')}</div>`);
 }

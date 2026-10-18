@@ -41,7 +41,7 @@ export async function serviceView() {
         { label: 'Cost', key: 'cost', num: true, sort: total, render: (j) => fmtMoney(total(j)) },
         { label: 'Status', key: 'status', render: (j) => jobBadge(j.status) },
         { label: '', nosort: true, render: (j) => actionBtn(nextAction(j)) },
-      ], jobs, { empty: 'No service jobs', scroll: true })}</section>`;
+      ], jobs, { ctx: 'job', empty: 'No service jobs', scroll: true })}</section>`;
 }
 
 export async function serviceJobView(id) {
@@ -87,6 +87,6 @@ export async function serviceJobView(id) {
         { label: 'ETA / arrived', key: 'expected_arrival_date', render: (s) => fmtDate(s.actual_arrival_date ?? s.expected_arrival_date) },
         { label: 'Cost', key: 'freight_cost', num: true, render: (s) => fmtMoney(s.freight_cost) },
         { label: 'Status', key: 'status', render: (s) => statusBadge(s.status) },
-      ], j.shipments, { empty: 'Not collected yet' })}</section>
+      ], j.shipments, { ctx: 'haul', empty: 'Not collected yet' })}</section>
     </div>`;
 }

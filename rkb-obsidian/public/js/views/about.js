@@ -1,6 +1,6 @@
 // How the prototype works: the mocked models, the data, and the data model.
 
-import { api, html, fmtDate, fmtNum, pageHead } from '../lib.js';
+import { api, html, fmtDate, fmtNum, pageHead, term } from '../lib.js';
 
 export async function aboutView() {
   const meta = await api('/meta');
@@ -13,12 +13,12 @@ export async function aboutView() {
       <p><b>Forecasting model</b> → expected new orders by model and week → <b>Inventory prediction model</b> (with current orders, stock, open POs and supplier delays) → build plan + parts purchase recommendations → <b>"What do you need to do today"</b>. <b>Parts performance tracking</b> feeds the inventory model with scrap rates, supplier delivery slip and supplier choice.</p>
 
       <h2>1 · Forecasting model (mock)</h2>
-      <p>For each tractor model: monthly tractors ordered over the last 36 months are de-seasonalised with a month-of-year index (pooled across models), giving a <i>level</i> (last 6 months) and a damped <i>trend</i> (last 24 months). The forecast is <code>(level + trend × months ahead) × seasonality × economic factor</code>, where the economic factor comes from the dataset's recent <code>Market_Trend_Index</code> and <code>Inflation_Rate</code>. The P10–P90 range comes from the historical spread plus count noise. A one-month-ahead backtest reports accuracy.</p>
+      <p>For each tractor model: monthly tractors ordered over the last 36 months are de-seasonalised with a month-of-year index (pooled across models), giving a <i>level</i> (last 6 months) and a damped <i>trend</i> (last 24 months). The forecast is <code>(level + trend × months ahead) × seasonality × economic factor</code>, where the economic factor comes from the dataset's recent <code>Market_Trend_Index</code> and <code>Inflation_Rate</code>. The ${term('P10–P90', 'P10–P90 range')} comes from the historical spread plus count noise. A one-month-ahead backtest reports accuracy.</p>
 
       <h2>2 · Inventory prediction model (mock)</h2>
       <ol>
         <li><b>Firm demand</b>: every open customer order, minus tractors already built, building or earmarked for it.</li>
-        <li><b>Forecast demand</b>: the forecast's expected new orders (at the chosen P50/P75/P90 level), shifted by the typical order-to-delivery lead time so only demand needing delivery inside the horizon counts.</li>
+        <li><b>Forecast demand</b>: the forecast's expected new orders (at the chosen ${term('P50')}/${term('P75')}/${term('P90')} level), shifted by the typical order-to-delivery lead time so only demand needing delivery inside the horizon counts.</li>
         <li><b>Don't double count</b>: unassigned tractors in stock or on the line are netted against that demand first and surfaced as "earmark" suggestions.</li>
         <li><b>Build schedule</b>: one tractor per bay per working day once parts are on hand. Firm orders are built up to 3 weeks early; forecast demand about a week before it's needed.</li>
         <li><b>Parts</b>: each build pulls its bill of materials, grossed up by the expected scrap/reject rate. Projected on-hand = stock + open POs at their <i>predicted</i> arrival (carrier ETA, or quoted date + that supplier's historical slip) − requirements.</li>

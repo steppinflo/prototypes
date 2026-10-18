@@ -351,3 +351,7 @@ td .row { flex-wrap: nowrap; }
 .td-preview-text b { color: var(--ink); }
 .td-preview-meta { color: var(--muted); margin-top: 3px; }
 @media (max-width: 960px) { .tractor-view { grid-template-columns: minmax(0, 1fr); } }
+
+/* Hover help on column headers, KPI labels and planning terms */
+.help-label { border-bottom: 1px dotted var(--muted); cursor: help; }
+th .help-label { border-bottom-color: var(--axis); }

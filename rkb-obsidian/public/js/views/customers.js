@@ -17,7 +17,7 @@ export async function customersView() {
       { label: 'Open orders', key: 'open_orders', num: true },
       { label: 'Tractors in field', key: 'fleet', num: true },
       { label: 'Open issues', key: 'open_issues', num: true, render: (c) => (c.open_issues ? html`<span class="badge critical">${c.open_issues}</span>` : '0') },
-    ], list)}</section>`;
+    ], list, { ctx: 'customer' })}</section>`;
 }
 
 export async function customerView(id) {
@@ -43,14 +43,14 @@ export async function customerView(id) {
       { label: 'Expected', key: 'expected_delivery_date', render: (o) => fmtDate(o.expected_delivery_date) },
       { label: 'Delivered', key: 'actual_delivery_date', render: (o) => fmtDate(o.actual_delivery_date) },
       { label: 'Status', key: 'status', render: (o) => statusBadge(o.status) },
-    ], c.orders, { scroll: true })}</section>
+    ], c.orders, { ctx: 'order', scroll: true })}</section>
     <div class="grid cols-2">
       <section class="card"><div class="card-head"><h2>Fleet</h2></div>${table([
         { label: 'Tractor', key: 'serial_number', render: (t) => tractorLink(t.id, t.serial_number) },
         { label: 'Model', key: 'model_number', render: (t) => html`${modelSwatch(t.model_number)}${t.model_number}` },
         { label: 'Delivered', key: 'delivered_date', render: (t) => fmtDate(t.delivered_date) },
         { label: 'Order', key: 'customer_order_id', render: (t) => orderLink(t.customer_order_id) },
-      ], c.fleet, { scroll: true, empty: 'No tractors delivered yet' })}</section>
+      ], c.fleet, { ctx: 'tractor', scroll: true, empty: 'No tractors delivered yet' })}</section>
       <section class="card"><div class="card-head"><h2>Field issues</h2></div>${table([
         { label: 'Report', key: 'id', render: (f) => html`<a class="mono" href="#/quality/${f.id}">${f.id}</a>` },
         { label: 'Date', key: 'reported_date', render: (f) => fmtDate(f.reported_date) },
@@ -58,6 +58,6 @@ export async function customerView(id) {
         { label: 'Part', key: 'part_number', render: (f) => partLink(f.part_number) },
         { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
         { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-      ], c.failures, { scroll: true, empty: 'No issues reported' })}</section>
+      ], c.failures, { ctx: 'failure', scroll: true, empty: 'No issues reported' })}</section>
     </div>`;
 }

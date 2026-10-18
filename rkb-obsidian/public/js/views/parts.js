@@ -26,7 +26,7 @@ export async function partsView() {
         { label: 'Suppliers (score)', key: 'suppliers', nosort: true, render: (p) => html`${p.suppliers.map((s) => html`<a class="chip" href="#/suppliers/${s.supplierId}">${s.supplierId.slice(-1)}${s.isPrimary ? '★' : ''} ${fmtNum(s.score)}</a> `)}` },
         { label: 'Next order', key: 'next', sort: (p) => p.nextRecommendation?.orderBy ?? '9', render: (p) => (p.nextRecommendation ? html`${fmtNum(p.nextRecommendation.quantity)} by ${fmtDate(p.nextRecommendation.orderBy)}` : '—') },
         { label: 'Status', key: 'status', sort: (p) => p.plan.status, render: (p) => statusBadge(p.plan.status) },
-      ], parts)}
+      ], parts, { ctx: 'partList' })}
       <div class="card-note">★ primary supplier · scores from parts performance tracking (0–100)</div>
     </section>`;
 }
@@ -85,7 +85,7 @@ export async function partView(pn) {
         { label: 'Installed', key: 'inst', num: true, sort: (s) => s.performance?.unitsInstalled, render: (s) => fmtNum(s.performance?.unitsInstalled) },
         { label: 'Failures (rcv/mfg/field)', key: 'f', nosort: true, render: (s) => (s.performance ? `${s.performance.failures.receiving} / ${s.performance.failures.manufacturing} / ${s.performance.failures.field}` : '—') },
         { label: 'Failure rate', key: 'fr', num: true, sort: (s) => s.performance?.failureRate, render: (s) => html`${fmtPct(s.performance?.failureRate, 1)} <span class="muted small">vs ${fmtPct(s.performance?.categoryFailureRate, 1)}</span>` },
-      ], p.suppliers)}</section>
+      ], p.suppliers, { ctx: 'supplierPart' })}</section>
     <div class="grid cols-2" style="margin-bottom:16px">
       <section class="card"><div class="card-head"><h2>Open parts orders</h2></div>
         ${table([
@@ -95,7 +95,7 @@ export async function partView(pn) {
           { label: 'Quoted', key: 'expectedDelivery', render: (r) => html`${fmtDate(r.expectedDelivery)}${r.overdue ? html` <span class="badge critical">Late</span>` : ''}` },
           { label: 'Predicted', key: 'predictedArrival', render: (r) => html`${fmtDate(r.predictedArrival)}<div class="muted small">${r.basis}</div>` },
           { label: 'Status', key: 'status', render: (r) => statusBadge(r.status) },
-        ], p.openOrders, { empty: 'Nothing on order' })}</section>
+        ], p.openOrders, { ctx: 'receipt', empty: 'Nothing on order' })}</section>
       <section class="card"><div class="card-head"><h2>In stock (${p.serialized ? 'units' : 'lots'})</h2></div>
         ${table([
           { label: p.serialized ? 'Serial' : 'Lot', key: 'id', render: (ip) => html`<a class="mono" href="#/inventory-parts/${ip.id}">${ip.serial_number ?? ip.lot_number}</a>` },
@@ -103,7 +103,7 @@ export async function partView(pn) {
           { label: 'Received', key: 'received_date', render: (ip) => fmtDate(ip.received_date) },
           { label: 'On hand', key: 'quantity_on_hand', num: true },
           { label: 'PO', key: 'inventory_order_id', render: (ip) => poLink(ip.inventory_order_id) },
-        ], p.stock, { empty: 'None on hand', scroll: true })}</section>
+        ], p.stock, { ctx: 'stock', empty: 'None on hand', scroll: true })}</section>
     </div>
     <div class="grid cols-2">
       <section class="card"><div class="card-head"><h2>Recently installed</h2></div>
@@ -112,7 +112,7 @@ export async function partView(pn) {
           { label: 'Unit / lot', key: 'part_serial', render: (r) => html`<a class="mono" href="#/inventory-parts/${r.inventory_part_id}">${r.part_serial ?? r.lot_number}</a>` },
           { label: 'Qty', key: 'quantity', num: true },
           { label: 'Installed', key: 'installed_date', render: (r) => fmtDate(r.installed_date) },
-        ], p.recentInstalls, { scroll: true })}</section>
+        ], p.recentInstalls, { ctx: 'install', scroll: true })}</section>
       <section class="card"><div class="card-head"><h2>Recent failures</h2></div>
         ${table([
           { label: 'Report', key: 'id', render: (f) => html`<a class="mono" href="#/quality/${f.id}">${f.id}</a>` },
@@ -121,7 +121,7 @@ export async function partView(pn) {
           { label: 'Class', key: 'failure_class' },
           { label: 'Supplier', key: 'supplier_id' },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], p.failures, { empty: 'No failures recorded', scroll: true })}</section>
+        ], p.failures, { ctx: 'failure', empty: 'No failures recorded', scroll: true })}</section>
     </div>`;
 }
 
@@ -153,7 +153,7 @@ export async function inventoryPartView(id) {
           { label: 'Stage', key: 'stage' },
           { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], ip.failures, { empty: 'No failures linked to this part' })}</section>
+        ], ip.failures, { ctx: 'failure', empty: 'No failures linked to this part' })}</section>
     </div>
     <section class="card"><div class="card-head"><h2>Installed in</h2></div>
       ${table([
@@ -163,7 +163,7 @@ export async function inventoryPartView(id) {
         { label: 'Installed', key: 'installed_date', render: (r) => fmtDate(r.installed_date) },
         { label: 'Tractor status', key: 'tractor_status', render: (r) => statusBadge(r.tractor_status) },
         { label: 'Customer', key: 'customer_name', render: (r) => r.customer_name ?? '—' },
-      ], ip.installedIn, { empty: 'Not installed in any tractor yet' })}</section>`;
+      ], ip.installedIn, { ctx: 'installedIn', empty: 'Not installed in any tractor yet' })}</section>`;
 }
 
 DIALOGS['new-po'] = async (data, done) => {

@@ -24,7 +24,7 @@ export async function notificationsView() {
         { label: 'About', key: 'entity_id', render: (n) => (n.entity_id && ENTITY_LINK[n.entity] ? html`<a class="mono" href="${ENTITY_LINK[n.entity](n.entity_id)}">${n.entity_id}</a>` : '—') },
         { label: 'Status', key: 'status', render: (n) => (n.status === 'acknowledged' ? html`<span class="badge good">Acknowledged ${fmtDate(n.acknowledged_date)}</span>`
           : actionBtn({ label: 'Mark acknowledged', url: `/notifications/${n.id}/ack`, body: {} })) },
-      ], rows, { empty: 'No notifications sent yet — use "Notify" on a task, order, PO or failure.' })}
+      ], rows, { ctx: 'notification', empty: 'No notifications sent yet — use "Notify" on a task, order, PO or failure.' })}
     </section>`;
 }
 
@@ -36,5 +36,5 @@ export function notificationList(rows) {
     { label: 'To', key: 'recipient_name' },
     { label: 'Subject', key: 'subject' },
     { label: 'Status', key: 'status', render: (n) => (n.status === 'acknowledged' ? html`<span class="badge good">Acknowledged</span>` : html`<span class="badge plain">Sent</span>`) },
-  ], rows)}`;
+  ], rows, { ctx: 'notification' })}`;
 }

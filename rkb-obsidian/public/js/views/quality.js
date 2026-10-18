@@ -116,7 +116,7 @@ export function recurringTable(rows) {
       recipientType: 'supplier', recipientId: r.supplierId, urgency: r.trend === 'rising' ? 'urgent' : 'normal', entity: 'part', entityId: r.partNumber,
       subject: `Recurring failure: ${r.partNumber} — ${r.symptom}`,
       body: `We have ${r.units} reports of "${r.symptom}" on ${r.partNumber} from your parts between ${r.firstSeen} and ${r.lastSeen} (${r.lots} lots, ${r.customers} customers). Please send root cause and a corrective action plan.` } }) },
-  ], rows, { empty: 'No pattern repeats 3+ times in this period', scroll: true });
+  ], rows, { ctx: 'recurring', empty: 'No pattern repeats 3+ times in this period', scroll: true });
 }
 
 function lotTable(rows) {
@@ -127,7 +127,7 @@ function lotTable(rows) {
     { label: 'Failures', key: 'units', num: true, render: (r) => html`${r.units} <span class="muted small">of ${r.lot_size} in lot</span>` },
     { label: 'Stages', key: 'stages', render: (r) => r.stages.split(',').map((x) => stageLabel[x]).join(', ') },
     { label: 'First – last', key: 'last_seen', render: (r) => `${fmtDate(r.first_seen)} – ${fmtDate(r.last_seen)}` },
-  ], rows, { empty: 'No lot has more than one failure in this period', scroll: true });
+  ], rows, { ctx: 'lot', empty: 'No lot has more than one failure in this period', scroll: true });
 }
 
 function lateTable(rows) {
@@ -142,7 +142,7 @@ function lateTable(rows) {
       recipientType: 'supplier', recipientId: r.supplier_id, urgency: 'normal', entity: 'part', entityId: r.part_number,
       subject: `Repeated late deliveries: ${r.part_number}`,
       body: `${r.late} of ${r.pos} orders for ${r.part_number} arrived late (avg ${r.avg_late} days, worst ${r.worst}). Please confirm realistic lead times or a recovery plan.` } }) },
-  ], rows, { empty: 'No supplier/part was late 3+ times in this period', scroll: true });
+  ], rows, { ctx: 'late', empty: 'No supplier/part was late 3+ times in this period', scroll: true });
 }
 
 function perfTable(perf) {
@@ -157,7 +157,7 @@ function perfTable(perf) {
     { label: 'On time', key: 'onTimeRate', num: true, render: (r) => fmtPct(r.onTimeRate) },
     { label: 'Avg late', key: 'avgDaysLate', num: true, render: (r) => (r.avgDaysLate === null ? '—' : `${fmtNum(r.avgDaysLate, 1)}d`) },
     { label: 'Score', key: 'score', num: true, render: (r) => html`<span class="score">${fmtNum(r.score)}</span>${r.lowSample ? html` <span class="muted small">low n</span>` : ''}` },
-  ], [...perf.parts].sort((a, b) => a.score - b.score), { scroll: true });
+  ], [...perf.parts].sort((a, b) => a.score - b.score), { ctx: 'supplierPart', scroll: true });
 }
 
 function supplierBars(perf) {
@@ -179,7 +179,7 @@ export function failuresTable(rows) {
     { label: 'Tractor / customer', key: 'serial_number', render: (f) => html`${f.tractor_id ? tractorLink(f.tractor_id, f.serial_number) : '—'}${f.customer_name ? html`<div class="small muted">${f.customer_name}</div>` : ''}` },
     { label: 'Description', key: 'description', render: (f) => html`<span class="small">${f.description}</span>` },
     { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-  ], rows, { empty: 'No failure reports match', scroll: true });
+  ], rows, { ctx: 'failure', empty: 'No failure reports match', scroll: true });
 }
 
 export async function failureView(id) {
@@ -226,7 +226,7 @@ export async function failureView(id) {
         { label: 'Status', key: 'status' },
         { label: 'Pickup', key: 'scheduled_pickup_date', render: (j) => fmtDate(j.scheduled_pickup_date) },
         { label: 'Back by', key: 'expected_return_date', render: (j) => fmtDate(j.returned_date ?? j.expected_return_date) },
-      ], f.serviceJobs)}` : ''}
+      ], f.serviceJobs, { ctx: 'job' })}` : ''}
       ${notificationList(f.notifications)}</section>
     </div>`;
 }

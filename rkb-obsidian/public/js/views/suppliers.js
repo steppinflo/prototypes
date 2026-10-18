@@ -64,7 +64,7 @@ export async function supplierView(id) {
           { label: 'Quoted', key: 'expectedDelivery', render: (r) => html`${fmtDate(r.expectedDelivery)}${r.overdue ? html` <span class="badge critical">Late</span>` : ''}` },
           { label: 'Predicted', key: 'predictedArrival', render: (r) => fmtDate(r.predictedArrival) },
           { label: 'Status', key: 'status', render: (r) => statusBadge(r.status) },
-        ], s.openOrders, { empty: 'No open orders' })}</section>
+        ], s.openOrders, { ctx: 'receipt', empty: 'No open orders' })}</section>
     </div>
     <div class="grid cols-2" style="margin-bottom:16px">
       <section class="card"><div class="card-head"><h2>Failures per 1,000 units, last 12 months</h2></div>${supplierTrendChart(trends.trends, 'failureRate')}</section>
@@ -82,7 +82,7 @@ export async function supplierView(id) {
         { label: 'On time', key: 'onTimeRate', num: true, render: (r) => fmtPct(r.onTimeRate) },
         { label: 'Avg late', key: 'avgDaysLate', num: true, render: (r) => (r.avgDaysLate === null ? '—' : `${fmtNum(r.avgDaysLate, 1)}d`) },
         { label: 'Score', key: 'score', num: true, render: (r) => html`<span class="score">${fmtNum(r.score)}</span>` },
-      ], s.parts)}
+      ], s.parts, { ctx: 'supplierPart' })}
       <div class="card-note">Failures shown as receiving / manufacturing / field. Failure rate vs. the average for that part category across all suppliers.</div></section>
     <div class="grid cols-2">
       <section class="card"><div class="card-head"><h2>Recent deliveries</h2></div>
@@ -92,7 +92,7 @@ export async function supplierView(id) {
           { label: 'Qty', key: 'quantity', num: true },
           { label: 'Quoted', key: 'expected_delivery_date', render: (r) => fmtDate(r.expected_delivery_date) },
           { label: 'Delivered', key: 'actual_delivery_date', render: (r) => { const d = daysBetween(r.expected_delivery_date, r.actual_delivery_date); return html`${fmtDate(r.actual_delivery_date)} ${d > 0 ? html`<span class="due over small">+${d}d</span>` : html`<span class="small" style="color:var(--good-text)">on time</span>`}`; } },
-        ], s.recentOrders, { scroll: true })}</section>
+        ], s.recentOrders, { ctx: 'delivery', scroll: true })}</section>
       <section class="card"><div class="card-head"><h2>Recent failures</h2></div>
         ${table([
           { label: 'Report', key: 'id', render: (f) => html`<a class="mono" href="#/quality/${f.id}">${f.id}</a>` },
@@ -101,6 +101,6 @@ export async function supplierView(id) {
           { label: 'Stage', key: 'stage' },
           { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], s.failures, { scroll: true })}</section>
+        ], s.failures, { ctx: 'failure', scroll: true })}</section>
     </div>`;
 }

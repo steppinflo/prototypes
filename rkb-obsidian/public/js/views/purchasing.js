@@ -24,13 +24,14 @@ export async function purchasingView() {
         { label: 'Value', key: 'v', num: true, sort: (r) => r.quantity * r.unit_cost, render: (r) => fmtMoney(r.quantity * r.unit_cost) },
         { label: 'Submitted', key: 'submission_date', render: (r) => fmtDate(r.submission_date) },
         { label: 'Quoted delivery', key: 'expected_delivery_date', render: (r) => html`${fmtDate(r.expected_delivery_date)}${r.status !== 'received' && r.expected_delivery_date < today() ? html` <span class="due over small">${daysBetween(r.expected_delivery_date, today())}d late</span>` : ''}` },
-        { label: r0(status), key: 'actual_delivery_date', render: (r) => (r.status === 'received'
+        { label: r0(status), help: status === 'received' ? 'Date the order was delivered, with days late versus the supplier\u2019s quote.'
+          : 'Delivered date once received; otherwise when the planner expects it — the carrier\u2019s ETA if shipped, else the quoted date plus the supplier\u2019s typical slip.', key: 'actual_delivery_date', render: (r) => (r.status === 'received'
           ? html`${fmtDate(r.actual_delivery_date)}${r.actual_delivery_date > r.expected_delivery_date ? html` <span class="due over small">+${daysBetween(r.expected_delivery_date, r.actual_delivery_date)}d</span>` : ''}`
           : r.prediction ? html`${fmtDate(r.prediction.predictedArrival)}<div class="muted small">${r.prediction.basis}</div>` : '—') },
         { label: 'Source', key: 'source', render: (r) => html`${r.source === 'model_recommendation' ? html`<span class="badge info">Model</span>` : r.source === 'manual' ? html`<span class="badge plain">Manual</span>` : html`<span class="muted small">History</span>`}${r.rush ? html` <span class="badge high">Rush</span>` : ''}` },
         { label: 'Status', key: 'status', render: (r) => html`${statusBadge(r.status)}${r.quantity_rejected ? html` <span class="badge critical">${r.quantity_rejected} rejected</span>` : ''}` },
         { label: '', nosort: true, render: (r) => poActions(r) },
-      ], data.rows, { empty: 'No parts orders here' })}
+      ], data.rows, { ctx: 'po', empty: 'No parts orders here' })}
       <div class="card-note">${data.rows.length} of ${data.total} orders</div>
     </section>`;
 }
@@ -78,7 +79,7 @@ export async function purchaseOrderView(id) {
           { label: 'Shipped', key: 'shipped_date', render: (s) => fmtDate(s.shipped_date) },
           { label: 'ETA', key: 'expected_arrival_date', render: (s) => fmtDate(s.expected_arrival_date) },
           { label: 'Arrived', key: 'actual_arrival_date', render: (s) => fmtDate(s.actual_arrival_date) },
-        ], po.shipments, { empty: 'Supplier has not shipped yet' })}
+        ], po.shipments, { ctx: 'shipment', empty: 'Supplier has not shipped yet' })}
         <div class="card-head"><h2>Receiving issues</h2></div>
         ${table([
           { label: 'Report', key: 'id', render: (f) => html`<a class="mono" href="#/quality/${f.id}">${f.id}</a>` },
@@ -86,7 +87,7 @@ export async function purchaseOrderView(id) {
           { label: 'Qty', key: 'quantity', num: true },
           { label: 'Severity', key: 'severity', render: (f) => severityBadge(f.severity) },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], po.failures, { empty: 'No issues' })}
+        ], po.failures, { ctx: 'failure', empty: 'No issues' })}
         ${notificationList(po.notifications)}
       </section>
     </div>
@@ -97,7 +98,7 @@ export async function purchaseOrderView(id) {
         { label: 'Qty', key: 'quantity', num: true },
         { label: 'On hand', key: 'quantity_on_hand', num: true },
         { label: 'Status', key: 'status', render: (ip) => statusBadge(ip.status) },
-      ], po.inventoryParts, { empty: 'Nothing received yet', scroll: true })}</section>`;
+      ], po.inventoryParts, { ctx: 'received', empty: 'Nothing received yet', scroll: true })}</section>`;
 }
 
 DIALOGS['receive-po'] = (data, done) => {

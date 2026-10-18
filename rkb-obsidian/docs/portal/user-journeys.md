@@ -55,6 +55,13 @@ user can take any action.
 parts list, recommendations, failures) shows a preview: a small tractor drawing with
 that part highlighted, its name, what it does in the tractor, and the models that use it.
 
+**Explanations on hover.** Every table column header, the planning terms P10, P50,
+P75, P90 and MAPE, jargon KPI labels (carrying cost, build capacity used, economic
+factor, …) and the planning assumptions are dotted-underlined: hover to see what they
+mean. Where a header means different things in different tables (for example *Status*
+on an order vs. a parts order vs. a repair job), the explanation is specific to that
+table. The text lives in `public/js/glossary.js`.
+
 **Conventions used on every page**
 
 - Buttons act immediately and confirm with a toast. Cancelling an order, and rushing or
@@ -568,3 +575,4 @@ uses (`test/flows.test.mjs`):
 | J8, J7, J12 building, QC hold, earmarking, shipping, delivery, receiving, failures | `test/actions.test.mjs` |
 | Seed integrity, planner and task rules | `test/seed.test.mjs`, `test/models.test.mjs` |
 | J13 parts diagram covers every part of every model; previews and colouring | `test/diagram.test.mjs` |
+| Every column header has an explanation; P-terms and MAPE explained | `test/glossary.test.mjs` |

@@ -28,7 +28,7 @@ export async function ordersView() {
         { label: 'Delivered', key: 'actual_delivery_date', render: (o) => html`${fmtDate(o.actual_delivery_date)}${o.actual_delivery_date && o.actual_delivery_date > o.expected_delivery_date ? html` <span class="due over small">+${daysBetween(o.expected_delivery_date, o.actual_delivery_date)}d</span>` : ''}` },
         { label: 'Value', key: 'unit_price', num: true, sort: (o) => o.unit_price * o.quantity, render: (o) => fmtMoney(o.unit_price * o.quantity) },
         { label: 'Status', key: 'status', render: (o) => html`${statusBadge(o.status)} ${o.priority === 'rush' ? html`<span class="badge high">Rush</span>` : ''} ${o.risk ? statusBadge(o.risk.severity) : ''}` },
-      ], data.rows, { empty: 'No orders match' })}
+      ], data.rows, { ctx: 'order', empty: 'No orders match' })}
       <div class="card-note">${data.rows.length} of ${data.total} orders</div>
     </section>`;
 }
@@ -98,14 +98,14 @@ export async function orderView(id) {
             { label: 'Tractor', key: 'serialNumber', render: (r) => tractorLink(r.tractorId, r.serialNumber) },
             { label: 'Status', key: 'tractorStatus', render: (r) => statusBadge(r.tractorStatus) },
             { label: '', nosort: true, render: (r) => actionBtn({ label: 'Earmark', url: `/tractors/${r.tractorId}/earmark`, body: { orderId: o.id } }, 'btn small primary') },
-          ], o.stockSuggestions)}` : ''}
+          ], o.stockSuggestions, { ctx: 'stockSuggestion' })}` : ''}
         ${table([
           { label: 'Build', key: 'buildDate', render: (b) => fmtDate(b.buildDate) },
           { label: 'Ship by', key: 'needBy', render: (b) => fmtDate(b.needBy) },
           { label: 'Parts ready', key: 'partsReady', render: (b) => (b.partsReady ? fmtDate(b.partsReady) : 'on hand') },
           { label: 'Short', key: 'shortParts', render: (b) => b.shortParts.join(', ') || '—' },
           { label: 'Status', key: 'status', render: (b) => statusBadge(b.status) },
-        ], o.plannedBuilds, { empty: remaining > 0 ? 'Covered by stock' : 'All tractors are assigned' })}
+        ], o.plannedBuilds, { ctx: 'build', empty: remaining > 0 ? 'Covered by stock' : 'All tractors are assigned' })}
       </section>
     </div>
     <section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Tractors on this order</h2></div>
@@ -117,7 +117,7 @@ export async function orderView(id) {
         { label: 'Completed', key: 'build_complete_date', render: (t) => fmtDate(t.build_complete_date) },
         { label: 'Shipped', key: 'ship_date', render: (t) => fmtDate(t.ship_date) },
         { label: 'Delivered', key: 'delivered_date', render: (t) => fmtDate(t.delivered_date) },
-      ], o.tractors, { empty: 'No tractors assigned yet' })}</section>
+      ], o.tractors, { ctx: 'tractor', empty: 'No tractors assigned yet' })}</section>
     <div class="grid cols-2">
       <section class="card"><div class="card-head"><h2>Shipments</h2></div>
         ${table([
@@ -127,7 +127,7 @@ export async function orderView(id) {
           { label: 'ETA', key: 'expected_arrival_date', render: (s) => fmtDate(s.expected_arrival_date) },
           { label: 'Arrived', key: 'actual_arrival_date', render: (s) => fmtDate(s.actual_arrival_date) },
           { label: '', nosort: true, render: (s) => (s.status === 'in_transit' ? actionBtn({ label: 'Mark delivered', url: `/shipments/${s.id}/deliver`, body: {} }) : statusBadge(s.status)) },
-        ], o.shipments, { empty: 'Not shipped yet' })}</section>
+        ], o.shipments, { ctx: 'shipment', empty: 'Not shipped yet' })}</section>
       <section class="card"><div class="card-head"><h2>Issues reported</h2></div>
         ${table([
           { label: 'Report', key: 'id', render: (f) => html`<a class="mono" href="#/quality/${f.id}">${f.id}</a>` },
@@ -135,7 +135,7 @@ export async function orderView(id) {
           { label: 'Part', key: 'part_number' },
           { label: 'Stage', key: 'stage' },
           { label: 'Status', key: 'status', render: (f) => statusBadge(f.status) },
-        ], o.failures, { empty: 'No failures reported on these tractors' })}
+        ], o.failures, { ctx: 'failure', empty: 'No failures reported on these tractors' })}
         ${notificationList(o.notifications)}</section>
     </div>`;
 }

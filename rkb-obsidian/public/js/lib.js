@@ -1,5 +1,7 @@
 // Shared front-end helpers: API calls, formatting, small HTML builders.
 
+import { columnHelp, kpiHelp, termHelp } from './glossary.js';
+
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(`/api${path}`, {
     method,
@@ -112,7 +114,19 @@ export const supplierLink = (id, name) => link(`#/suppliers/${id}`, name || id);
 export const customerLink = (id, name) => (id ? link(`#/customers/${id}`, name || id) : '—');
 
 export function kpi(label, value, hint = '', alert = false) {
-  return html`<div class="kpi ${alert ? 'alert' : ''}"><div class="label">${label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`;
+  const help = typeof label === 'string' ? kpiHelp(label) : null;
+  return html`<div class="kpi ${alert ? 'alert' : ''}"><div class="label">${help ? html`<span class="help-label" data-tip="${help}">${label}</span>` : label}</div><div class="value">${value}</div><div class="hint">${hint}</div></div>`;
+}
+
+/** An inline planning term (P10, P90, MAPE…) with its explanation on hover. */
+export function term(name, text = name) {
+  const help = termHelp(name);
+  return help ? html`<span class="help-label" data-tip="${help}">${text}</span>` : html`${text}`;
+}
+
+/** Hover help for any label: wraps it with a dotted underline and a tooltip. */
+export function helpLabel(text, help) {
+  return help ? html`<span class="help-label" data-tip="${help}">${text}</span>` : html`${text}`;
 }
 
 export function pageHead({ title, sub, crumbs, actions }) {
@@ -146,11 +160,19 @@ export function rangeControl(from, to) {
     <button class="btn small">Apply</button></form>`;
 }
 
-/** Sortable table. columns: [{key, label, num, render(row), sort(row)}] */
-export function table(columns, rows, { id = `t${Math.random().toString(36).slice(2, 8)}`, empty = 'Nothing here', scroll = false } = {}) {
+/**
+ * Sortable table. columns: [{key, label, num, render(row), sort(row), help}]
+ * Every header gets hover help: the column's own `help` text, else the glossary entry
+ * for this table's context (`ctx`) and label.
+ */
+export function table(columns, rows, { id = `t${Math.random().toString(36).slice(2, 8)}`, empty = 'Nothing here', scroll = false, ctx = null } = {}) {
   if (!rows.length) return html`<div class="empty">${empty}</div>`;
   TABLES.set(id, { columns, rows });
-  const head = columns.map((c, i) => html`<th class="${c.num ? 'num' : ''} ${c.nosort ? '' : 'sortable'}" data-table="${id}" data-col="${i}">${c.label}</th>`);
+  const helpFor = (c) => (c.help ? `<b>${esc(c.label)}</b><div style="margin-top:3px">${esc(c.help)}</div>` : columnHelp(c.label, ctx));
+  const head = columns.map((c, i) => {
+    const help = c.label ? helpFor(c) : null;
+    return html`<th class="${c.num ? 'num' : ''} ${c.nosort ? '' : 'sortable'}" data-table="${id}" data-col="${i}">${help ? html`<span class="help-label" data-tip="${help}">${c.label}</span>` : c.label}</th>`;
+  });
   return html`<div class="table-wrap ${scroll ? 'table-scroll' : ''}"><table id="${id}"><thead><tr>${head}</tr></thead>
     <tbody>${tableBody(columns, rows)}</tbody></table></div>`;
 }

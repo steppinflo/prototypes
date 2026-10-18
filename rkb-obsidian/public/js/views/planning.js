@@ -2,8 +2,11 @@
 
 import {
   api, html, fmtNum, fmtMoney, fmtPct, fmtWeek, fmtMonth, fmtDate, kpi, seg, qs, table, statusBadge,
-  pageHead, partLink, orderLink, customerLink, supplierLink, modelSwatch, MODEL_COLORS, actionBtn, relDue, tractorLink,
+  pageHead, partLink, orderLink, customerLink, supplierLink, modelSwatch, MODEL_COLORS, actionBtn, relDue, tractorLink, term, helpLabel,
 } from '../lib.js';
+import { kpiHelp, termHelp } from '../glossary.js';
+
+const help = (title, text) => `<b>${title}</b><div style="margin-top:3px">${text}</div>`;
 import { barChart, lineChart, legend, tipRows } from '../charts.js';
 
 const MODELS = ['TX-100', 'TX-200', 'TX-300', 'TX-400', 'TX-500'];
@@ -32,12 +35,12 @@ export async function planningView() {
       <div class="card-head"><h2>Planning assumptions</h2><span class="muted small">Change these and the models re-run instantly</span></div>
       <form class="card-body" data-form-post="/settings">
         <div class="form-grid">
-          <label class="field">Plan to forecast level
+          <label class="field">${helpLabel('Plan to forecast level', help('Plan to forecast level', 'Which forecast case the plan buys and builds for. Expected (P50): the median, leanest stock. Cautious (P75): demand should come in at or below this 3 times in 4. Conservative (P90): only exceeded 1 time in 10, so it holds the most stock.'))}
             <select name="forecast_service_level">${[['p50', 'Expected (P50)'], ['p75', 'Cautious (P75)'], ['p90', 'Conservative (P90)']].map(([v, l]) => html`<option value="${v}" ${v === st.serviceLevel ? 'selected' : ''}>${l}</option>`)}</select></label>
-          <label class="field">Safety stock (days of use)<input name="safety_stock_days" type="number" min="0" max="60" value="${st.safetyStockDays}"></label>
-          <label class="field">Build bays (tractors/day)<input name="build_bays" type="number" min="1" max="20" value="${st.buildBays}"></label>
-          <label class="field">Planning horizon (days)<input name="planning_horizon_days" type="number" min="30" max="180" value="${plan.horizonDays}"></label>
-          <label class="field">Receiving time (days)<input name="receiving_days" type="number" min="0" max="14" value="${st.receivingDays}"></label>
+          <label class="field">${helpLabel('Safety stock (days of use)', help('Safety stock', 'Extra stock kept per part, as days of its average planned usage, to absorb late deliveries and demand surprises.'))}<input name="safety_stock_days" type="number" min="0" max="60" value="${st.safetyStockDays}"></label>
+          <label class="field">${helpLabel('Build bays (tractors/day)', help('Build bays', 'How many tractors the plant can build per working day. Each tractor takes one day in a bay.'))}<input name="build_bays" type="number" min="1" max="20" value="${st.buildBays}"></label>
+          <label class="field">${helpLabel('Planning horizon (days)', help('Planning horizon', 'How far ahead the plan looks for demand, builds and purchases.'))}<input name="planning_horizon_days" type="number" min="30" max="180" value="${plan.horizonDays}"></label>
+          <label class="field">${helpLabel('Receiving time (days)', help('Receiving time', 'Days from a delivery arriving to the parts being inspected and usable on the line.'))}<input name="receiving_days" type="number" min="0" max="14" value="${st.receivingDays}"></label>
         </div>
         <div class="form-actions"><span class="muted small" style="margin-right:auto">Typical order-to-delivery lead time (from history): ${st.orderToDeliveryLeadDays} days</span><button class="btn primary">Re-run plan</button></div>
       </form>
@@ -73,7 +76,7 @@ export async function planningView() {
           { label: 'Due', key: 'expectedDelivery', render: (r) => fmtDate(r.expectedDelivery) },
           { label: 'Why', key: 'shortParts', render: (r) => [r.shortParts.length ? `Short: ${r.shortParts.join(', ')}` : '', r.capacityConstrained ? 'Capacity' : ''].filter(Boolean).join(' · ') },
           { label: 'Outlook', key: 'daysLate', render: (r) => (r.daysLate ? html`<span class="badge critical">${r.daysLate}d late</span>` : statusBadge('at_risk')) },
-        ], plan.orderRisks, { empty: 'No customer orders at risk' })}</section>
+        ], plan.orderRisks, { ctx: 'risk', empty: 'No customer orders at risk' })}</section>
       <section class="card"><div class="card-head"><h2>Use existing stock first</h2></div>
         <div class="card-note">Unassigned finished or in-progress tractors the model nets against demand instead of building new ones.</div>
         ${table([
@@ -82,7 +85,7 @@ export async function planningView() {
           { label: 'Covers', key: 'orderId', render: (r) => (r.orderId ? html`${orderLink(r.orderId)} <span class="muted">${r.customerName}</span>` : html`<span class="muted">Forecast demand</span>`) },
           { label: 'Need by', key: 'needBy', render: (r) => fmtDate(r.needBy) },
           { label: '', nosort: true, render: (r) => (r.orderId ? actionBtn({ label: 'Earmark', url: `/tractors/${r.tractorId}/earmark`, body: { orderId: r.orderId } }) : '') },
-        ], plan.stockAllocations, { empty: 'No unassigned tractors in stock' })}</section>
+        ], plan.stockAllocations, { ctx: 'stockSuggestion', empty: 'No unassigned tractors in stock' })}</section>
     </div>
 
     <section class="card">
@@ -100,7 +103,7 @@ export async function planningView() {
         { label: 'First shortfall', key: 'firstShortageDate', render: (r) => (r.firstShortageDate ? fmtDate(r.firstShortageDate) : '—') },
         { label: 'To buy', key: 'recommendedQuantity', num: true, render: (r) => fmtNum(r.recommendedQuantity) },
         { label: 'Status', key: 'status', render: (r) => statusBadge(r.status) },
-      ], plan.parts)}
+      ], plan.parts, { ctx: 'partPlan' })}
       <div class="card-note">"Lowest projected" uses only stock on hand and existing POs (at their predicted arrival) — a negative number is a shortfall without new orders.</div>
     </section>`;
 }
@@ -145,16 +148,16 @@ function forecastCard(f, fm) {
     <div class="card-head"><h2>Demand forecast</h2><div class="right">${seg('fm', [['all', 'All models'], ...MODELS.map((m) => [m, m])], fm)}</div></div>
     <div class="grid cols-2" style="padding:0 14px 6px">
       <div><h3 style="margin:4px 0 2px">Monthly tractors ordered — history &amp; forecast</h3>${histChart}</div>
-      <div><h3 style="margin:4px 0 2px">Next ${f.horizonDays} days by week — expected with P10–P90 range</h3>${weekChart}
-        ${legend([{ name: 'Expected', color, line: true }, { name: 'P10–P90 range', color, band: true }])}</div>
+      <div><h3 style="margin:4px 0 2px">Next ${f.horizonDays} days by week — expected with ${term('P10–P90', 'P10–P90 range')}</h3>${weekChart}
+        ${legend([{ name: 'Expected', color, line: true }, { name: 'P10–P90 range', color, band: true, tip: termHelp('P10–P90') }])}</div>
     </div>
     <div class="grid cols-3" style="padding:6px 14px 14px;align-items:start">
-      <div class="kpi"><div class="label">New-order tractors expected, next ${f.horizonDays} days</div>
-        <div class="value">${fmtNum(total.mean)}</div><div class="hint">P10 ${fmtNum(total.p10)} · P75 ${fmtNum(total.p75)} · P90 ${fmtNum(total.p90)}</div></div>
-      <div class="kpi"><div class="label">Economic factor</div><div class="value">×${fmtNum(f.economic.factor, 3)}</div>
+      <div class="kpi"><div class="label">${helpLabel(`New-order tractors expected, next ${f.horizonDays} days`, help('New-order tractors expected', `Tractors the forecast expects customers to order over the next ${f.horizonDays} days (the mean). P10, P75 and P90 below give the low, cautious and high cases.`))}</div>
+        <div class="value">${fmtNum(total.mean)}</div><div class="hint">${term('P10')} ${fmtNum(total.p10)} · ${term('P75')} ${fmtNum(total.p75)} · ${term('P90')} ${fmtNum(total.p90)}</div></div>
+      <div class="kpi"><div class="label">${helpLabel('Economic factor', kpiHelp('Economic factor'))}</div><div class="value">×${fmtNum(f.economic.factor, 3)}</div>
         <div class="hint">Market trend index ${fmtNum(f.economic.marketTrend, 2)} · inflation ${fmtNum(f.economic.inflation, 2)}% (avg of ${f.economic.months.map(fmtMonth).join(', ')})</div></div>
-      <div class="kpi"><div class="label">Backtest accuracy (total orders)</div><div class="value">${f.accuracy.mape === null ? '—' : `${fmtNum(100 - f.accuracy.mape)}%`}</div>
-        <div class="hint">MAPE ${fmtNum(f.accuracy.mape, 1)}% · ${f.accuracy.note}</div></div>
+      <div class="kpi"><div class="label">${helpLabel('Backtest accuracy (total orders)', kpiHelp('Backtest accuracy (total orders)'))}</div><div class="value">${f.accuracy.mape === null ? '—' : `${fmtNum(100 - f.accuracy.mape)}%`}</div>
+        <div class="hint">${term('MAPE')} ${fmtNum(f.accuracy.mape, 1)}% · ${f.accuracy.note}</div></div>
     </div>
     <div class="grid cols-2" style="padding:0 14px 14px;align-items:start">
       <div><h3 style="margin-bottom:4px">Seasonality (month-of-year index)</h3>${seasonChart}</div>
@@ -162,9 +165,9 @@ function forecastCard(f, fm) {
         { label: 'Model', key: 'model', render: (m) => html`${modelSwatch(m.model)}${m.model} <span class="muted">${m.name}</span>` },
         { label: 'Level/mo', key: 'level', num: true, render: (m) => fmtNum(m.level, 1) },
         { label: 'Trend/mo', key: 'trendPerMonth', num: true, render: (m) => (m.trendPerMonth >= 0 ? '+' : '') + fmtNum(m.trendPerMonth, 2) },
-        { label: `${f.horizonDays}d expected`, key: 'total', num: true, sort: (m) => m.total.mean, render: (m) => fmtNum(m.total.mean, 1) },
+        { label: `${f.horizonDays}d expected`, help: `Tractors the forecast expects customers to order over the next ${f.horizonDays} days (the mean).`, key: 'total', num: true, sort: (m) => m.total.mean, render: (m) => fmtNum(m.total.mean, 1) },
         { label: 'P10–P90', key: 'range', num: true, nosort: true, render: (m) => `${fmtNum(m.total.p10)}–${fmtNum(m.total.p90)}` },
-      ], f.models)}</div>
+      ], f.models, { ctx: 'forecastModel' })}</div>
     </div>
     <div class="card-note">${f.method}</div>
   </section>`;
@@ -208,7 +211,7 @@ export function recommendationsTable(recs) {
     { label: '', nosort: true, render: (r) => html`<div class="row">${actionBtn({ label: 'Place PO', url: '/inventory-orders', body: { partNumber: r.partNumber, supplierId: r.supplierId, quantity: r.quantity, source: 'model_recommendation' } }, `btn small ${r.rushOption ? '' : 'primary'}`)}
       ${r.rushOption ? actionBtn({ label: `Rush · +${fmtMoney(r.rushOption.premium)}`, url: '/inventory-orders', body: { partNumber: r.partNumber, supplierId: r.rushOption.supplierId, quantity: r.quantity, source: 'model_recommendation', rush: true } }, 'btn small primary') : ''}</div>
       ${r.rushOption ? html`<div class="small muted">rush lands ${fmtDate(r.rushOption.expectedAvailable)}${r.rushOption.daysLate ? `, ${r.rushOption.daysLate}d late` : ', on time'}</div>` : ''}` },
-  ], recs, { empty: 'No purchases needed right now' });
+  ], recs, { ctx: 'rec', empty: 'No purchases needed right now' });
 }
 
 function buildsTable(builds) {
@@ -223,5 +226,5 @@ function buildsTable(builds) {
     { label: 'Short', key: 'shortParts', render: (b) => b.shortParts.join(', ') || '—' },
     { label: 'Status', key: 'status', render: (b) => html`${statusBadge(b.status)}${b.daysLate ? html` <span class="small due over">${b.daysLate}d</span>` : ''}` },
     { label: '', nosort: true, render: (b) => (!b.startableNow ? '' : actionBtn({ label: 'Start now', url: '/builds', body: b.orderId ? { orderId: b.orderId, count: 1 } : { model: b.model, count: 1 } })) },
-  ], builds, { empty: 'No builds in this view', scroll: true });
+  ], builds, { ctx: 'build', empty: 'No builds in this view', scroll: true });
 }
